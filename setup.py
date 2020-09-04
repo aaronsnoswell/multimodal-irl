@@ -16,9 +16,9 @@ setup(
         "seaborn",
         "python-interface",
         "pytest",
-        "explicit-env @ git+https://github.com/aaronsnoswell/explicit-env.git",
-        "unimodal-irl @ git+https://github.com/aaronsnoswell/unimodal-irl.git",
-        "puddle-world @ git+https://github.com/aaronsnoswell/puddle-world.git",
+        "explicit_env @ git+https://github.com/aaronsnoswell/explicit-env.git",
+        "unimodal_irl @ git+https://github.com/aaronsnoswell/unimodal-irl.git",
+        "puddle_world @ git+https://github.com/aaronsnoswell/puddle-world.git",
     ],
     packages=find_packages(),
 )
