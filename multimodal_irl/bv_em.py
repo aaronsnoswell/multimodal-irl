@@ -18,7 +18,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #     rollouts,
 #     num_modes,
 #     initial_mode_weights=None,
-#     initial_mode_reward_weights=None,
+#     initial_reward_weights=None,
 #     max_iterations=100,
 #     min_weight_change=1e-6,
 #     boltzman_scale=1.0,
@@ -35,7 +35,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #
 #         initial_mode_weights (numpy array): Optional initial mode weight vector. If not
 #             provided, this will be initialized in a near-uniform fashion.
-#         initial_mode_reward_weights (list): List of initial mode reward weights (numpy
+#         initial_reward_weights (list): List of initial mode reward weights (numpy
 #             arrays) - one for each mode. If not provided, these weights are sampled from
 #             a uniform distribution over possible reward values.
 #         max_iterations (int): Maximum number of EM iterations to perform
@@ -78,22 +78,22 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #     else:
 #         mode_weights = initial_mode_weights
 #
-#     if initial_mode_reward_weights is None:
+#     if initial_reward_weights is None:
 #         # Use uniform initial weights over range of valid reward values
-#         mode_reward_weights = [
+#         reward_weights = [
 #             np.random.uniform(
 #                 low=env.reward_range[0], high=env.reward_range[1], size=len(env.states)
 #             )
 #             for _ in range(num_modes)
 #         ]
 #     else:
-#         mode_reward_weights = initial_mode_reward_weights
-#         m2 = np.clip(mode_reward_weights, *env.reward_range)
-#         if not np.all(m2 == mode_reward_weights):
+#         reward_weights = initial_reward_weights
+#         m2 = np.clip(reward_weights, *env.reward_range)
+#         if not np.all(m2 == reward_weights):
 #             warnings.warn(
 #                 "Initial reward weights are outside valid reward ranges - clipping"
 #             )
-#         mode_reward_weights = m2
+#         reward_weights = m2
 #
 #     for _it in it.count():
 #
@@ -101,7 +101,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #         print("================== EM Iteration {}".format(_it))
 #         print("Current mode weights: {}".format(mode_weights))
 #         print("Current mode reward weights:")
-#         for mr in mode_reward_weights:
+#         for mr in reward_weights:
 #             print(mr)
 #
 #         # E-step: Solve for assignment matrix
@@ -109,7 +109,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #         for m in range(num_modes):
 #
 #             # Use Boltzman policy for computing path likelihoods
-#             env._state_rewards = mode_reward_weights[m]
+#             env._state_rewards = reward_weights[m]
 #             v_star = value_iteration(env)
 #             q_star = q_from_v(v_star, env)
 #
@@ -139,7 +139,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #             raise NotImplementedError("Haven't yet implemented Maximum Likelihood IRL!")
 #             MaxLikelihoodIRL = None
 #             theta_s = MaxLikelihoodIRL()
-#             mode_reward_weights[m] = theta_s
+#             reward_weights[m] = theta_s
 #
 #         delta = np.max(np.abs(old_mode_weights - mode_weights))
 #         print("Weight change: {}".format(delta))
@@ -152,7 +152,7 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 #             print("Reached maximum number of EM iterations, stopping")
 #             break
 #
-#     return _it, zij, mode_weights, mode_reward_weights
+#     return _it, zij, mode_weights, reward_weights
 
 
 def responsibilty_matrix_maxent(env, rollouts, reward_weights, mode_weights=None):
@@ -196,7 +196,7 @@ def bv_em_maxent(
     rollouts,
     num_modes,
     initial_mode_weights=None,
-    initial_mode_reward_weights=None,
+    initial_reward_weights=None,
     max_iterations=100,
     min_weight_change=1e-6,
 ):
@@ -212,7 +212,7 @@ def bv_em_maxent(
         
         initial_mode_weights (numpy array): Optional list of initial mode weights -
             if not provided, defaults to uniform.
-        initial_mode_reward_weights (list): List of initial mode reward weights (numpy
+        initial_reward_weights (list): List of initial mode reward weights (numpy
             arrays) - one for each mode. If not provided, these weights are sampled from
             a uniform distribution over possible reward values.
         max_iterations (int): Maximum number of EM iterations to perform
@@ -246,9 +246,9 @@ def bv_em_maxent(
         ), "Wrong number of initial mode weights passed"
         mode_weights = initial_mode_weights
 
-    if initial_mode_reward_weights is None:
+    if initial_reward_weights is None:
         # Use uniform initial weights over range of valid reward values
-        mode_reward_weights = [
+        reward_weights = [
             np.random.uniform(
                 low=env.reward_range[0], high=env.reward_range[1], size=len(env.states)
             )
@@ -256,24 +256,22 @@ def bv_em_maxent(
         ]
     else:
         assert (
-            len(initial_mode_reward_weights) == num_modes
+            len(initial_reward_weights) == num_modes
         ), "Wrong number of initial reward weights passed"
-        mode_reward_weights = initial_mode_reward_weights
-        m2 = np.clip(mode_reward_weights, *env.reward_range)
-        if not np.all(m2 == mode_reward_weights):
+        reward_weights = initial_reward_weights
+        m2 = np.clip(reward_weights, *env.reward_range)
+        if not np.all(m2 == reward_weights):
             warnings.warn(
                 "Initial reward weights are outside valid reward ranges - clipping"
             )
-        mode_reward_weights = m2
+        reward_weights = m2
 
     for _it in it.count():
         print("EM Iteration {}".format(_it + 1), end="")
         print(", Weights:{}".format(mode_weights), end="")
 
         # E-step: Solve for responsibility matrix
-        zij = responsibilty_matrix_maxent(
-            env, rollouts, mode_reward_weights, mode_weights
-        )
+        zij = responsibilty_matrix_maxent(env, rollouts, reward_weights, mode_weights)
 
         # M-step: Update mode weights and reward estimates
         old_mode_weights = copy.copy(mode_weights)
@@ -290,7 +288,7 @@ def bv_em_maxent(
                 grad_twopoint=True,
                 path_weights=zij[:, m],
             )
-            mode_reward_weights[m] = theta_s[:-1]
+            reward_weights[m] = theta_s[:-1]
 
         delta = np.max(np.abs(old_mode_weights - mode_weights))
         print(", Δ:{}".format(delta))
@@ -303,4 +301,4 @@ def bv_em_maxent(
             print("Reached maximum number of EM iterations, stopping")
             break
 
-    return (_it + 1), zij, mode_weights, np.array(mode_reward_weights)
+    return (_it + 1), zij, mode_weights, np.array(reward_weights)
