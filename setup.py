@@ -18,6 +18,7 @@ setup(
         "pytest",
         "explicit-env @ git+https://github.com/aaronsnoswell/explicit-env.git",
         "unimodal-irl @ git+https://github.com/aaronsnoswell/unimodal-irl.git",
+        "puddle-world @ git+https://github.com/aaronsnoswell/puddle-world.git",
     ],
     packages=find_packages(),
 )
