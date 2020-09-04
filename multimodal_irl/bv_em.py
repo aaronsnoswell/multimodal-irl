@@ -226,7 +226,7 @@ def bv_em_maxent(
         (numpy array): List of weights, one for each reward mode - this is equal to the
             normalized sum along the columns of the assignment matrix, and is provided
             for convenience only.
-        (list): List of recovered reward weights (numpy arrays), one for each reward
+        (numpy array): K x |S| matrix of recovered state reward weights one for each
             mode
     """
 
@@ -303,4 +303,4 @@ def bv_em_maxent(
             print("Reached maximum number of EM iterations, stopping")
             break
 
-    return (_it + 1), zij, mode_weights, mode_reward_weights
+    return (_it + 1), zij, mode_weights, np.array(mode_reward_weights)
