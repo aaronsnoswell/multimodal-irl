@@ -36,6 +36,57 @@ def exclusive_pairings(l1, l2):
             yield tuple(zip(c, p))
 
 
+def miles(env_, gt_rewards, learned_rewards):
+    """Compute Min ILE Sum Index
+    
+    Args:
+        env_ (explicit_env.IExplicitEnv): Environment defining dynamics and discount
+            factor
+        gt_rewards (list): List of ground truth rewards
+        learned_rewards (list): List of learned rewards
+    
+    Returns:
+        (float): Minimum ILE Sum (MILES) metric
+        (list): List of ILE Sums for each pairing of rewards
+    """
+
+    # Copy rewards to environments up-front
+    gt_envs = []
+    for gt_r in gt_rewards:
+        env__ = copy.deepcopy(env_)
+        env__._state_rewards = gt_r
+        gt_envs.append(env__)
+    learned_envs = []
+    for learned_r in learned_rewards:
+        env__ = copy.deepcopy(env_)
+        env__._state_rewards = learned_r
+        learned_envs.append(env__)
+
+    # Pre-compute optimal policy values
+    gt_opt_pol_values = [
+        policy_evaluation(
+            e_gt, OptimalPolicy(q_from_v(value_iteration(e_gt), e_gt), stochastic=False)
+        )
+        for e_gt in gt_envs
+    ]
+
+    sum_iles = []
+    for pairing in exclusive_pairings(range(len(gt_envs)), range(len(learned_envs))):
+        sum_iles.append(
+            np.sum(
+                [
+                    ile_evd(
+                        gt_envs[i],
+                        learned_envs[j],
+                        optimal_policy_value=gt_opt_pol_values[i],
+                    )[0]
+                    for (i, j) in pairing
+                ]
+            )
+        )
+
+    return np.min(sum_iles), sum_iles
+
 
 def soft_contingency_table(resp1, resp2):
     """Compute the soft contingency table for two responsibility matrices
