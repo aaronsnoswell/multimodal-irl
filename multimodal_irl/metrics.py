@@ -5,7 +5,13 @@ import itertools as it
 
 from itertools import combinations, permutations
 
-from sklearn.metrics import adjusted_mutual_info_score
+from explicit_env.soln import (
+    value_iteration,
+    q_from_v,
+    OptimalPolicy,
+    policy_evaluation,
+)
+from unimodal_irl.experiments.metrics import ile_evd
 
 
 def exclusive_pairings(l1, l2):
