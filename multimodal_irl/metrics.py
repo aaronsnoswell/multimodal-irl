@@ -28,12 +28,13 @@ def exclusive_pairings(l1, l2):
     """
 
     num_elements = min(len(l1), len(l2))
-    l1_combs = list(combinations(l1, num_elements))
-    l2_perms = list(permutations(l2, num_elements))
+    combs = list(combinations(l1, num_elements))
+    perms = list(permutations(l2, num_elements))
 
-    for c in l1_combs:
-        for p in l2_perms:
-            yield tuple(zip(p, c))
+    for c in combs:
+        for p in perms:
+            yield tuple(zip(c, p))
+
 
 
 def soft_contingency_table(resp1, resp2):
