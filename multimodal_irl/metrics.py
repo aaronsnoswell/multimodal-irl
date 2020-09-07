@@ -51,24 +51,23 @@ def miles(env_, gt_rewards, learned_rewards):
     """
 
     # Copy rewards to environments up-front
+    # And pre-compute optimal policy values
     gt_envs = []
+    gt_env_opt_pol_values = []
     for gt_r in gt_rewards:
         env__ = copy.deepcopy(env_)
         env__._state_rewards = gt_r
         gt_envs.append(env__)
+
+        pi = OptimalPolicy(q_from_v(value_iteration(env__), env__), stochastic=False)
+        pi_v = policy_evaluation(env__, pi)
+        gt_env_opt_pol_values.append(pi_v)
+
     learned_envs = []
     for learned_r in learned_rewards:
         env__ = copy.deepcopy(env_)
         env__._state_rewards = learned_r
         learned_envs.append(env__)
-
-    # Pre-compute optimal policy values
-    gt_opt_pol_values = [
-        policy_evaluation(
-            e_gt, OptimalPolicy(q_from_v(value_iteration(e_gt), e_gt), stochastic=False)
-        )
-        for e_gt in gt_envs
-    ]
 
     sum_iles = []
     for pairing in exclusive_pairings(range(len(gt_envs)), range(len(learned_envs))):
@@ -78,7 +77,7 @@ def miles(env_, gt_rewards, learned_rewards):
                     ile_evd(
                         gt_envs[i],
                         learned_envs[j],
-                        optimal_policy_value=gt_opt_pol_values[i],
+                        optimal_policy_value=gt_env_opt_pol_values[i],
                     )[0]
                     for (i, j) in pairing
                 ]
