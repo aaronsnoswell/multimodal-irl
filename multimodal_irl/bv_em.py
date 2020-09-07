@@ -10,7 +10,7 @@ import itertools as it
 from explicit_env.soln import value_iteration, q_from_v, BoltzmannExplorationPolicy
 from unimodal_irl import sw_maxent_irl
 from unimodal_irl.utils import pad_terminal_mdp
-from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
+from unimodal_irl.sw_maxent_irl import maxent_path_logprobs, maxent_log_partition, r_tau
 
 
 # def bv_mm_irl_mlirl(
@@ -189,6 +189,62 @@ def responsibilty_matrix_maxent(env, rollouts, reward_weights, mode_weights=None
     zij /= np.sum(zij, axis=1, keepdims=True)
 
     return zij
+
+
+def mixture_ll_maxent(env, rollouts, zij, reward_weights):
+    """Find the log-likelihood of a MaxEnt MM-IRL mixture mode"""
+
+    env = copy.deepcopy(env)
+
+    num_paths, num_modes = zij.shape
+
+    num_states = len(env.states)
+    num_actions = len(env.actions)
+
+    # Find max path length
+    if len(rollouts) == 1:
+        max_path_length = min_path_length = len(rollouts[0])
+    else:
+        max_path_length = max(*[len(r) for r in rollouts])
+
+    # Pre-compute the partition values for each reward parameter
+    mode_partition_values = []
+    for r in reward_weights:
+        env._state_rewards = r
+        env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
+        mode_partition_values.append(
+            maxent_log_partition(
+                env_padded, max_path_length, env_padded.state_rewards, None, None, True,
+            )
+        )
+
+    total_ll = 0
+    # Sweep all paths
+    for r in rollouts:
+
+        # Find the likelihood of htis
+        path_likelihood = 0
+        for mode in range(num_modes):
+            # Slice out mode params
+            mode_weight = np.sum(zij[mode])
+            mode_reward = reward_weights[mode]
+            mode_partition = mode_partition_values[mode]
+
+            env_padded._state_reward = mode_reward
+
+            # Get log probability of this path under this mode
+            maxent_path_logprob = (
+                env.path_log_probability(r) + r_tau(env_padded, r) - mode_partition
+            )
+
+            # Find the likelihood of this path under this mode
+            path_mode_likelihood = mode_weight * np.exp(maxent_path_logprob)
+            path_likelihood += path_mode_likelihood
+
+        # This path's log probability is the log of the sum of it's probabilites under each mode
+        total_ll += np.log(path_likelihood)
+
+    return total_ll
 
 
 def bv_em_maxent(
