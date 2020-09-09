@@ -66,11 +66,11 @@ def mixture_ll_maxent(env, rollouts, zij, reward_weights):
         max_path_length = max(*[len(r) for r in rollouts])
 
     # Pre-compute the partition values for each reward parameter
-    mode_partition_values = []
+    mode_log_partition_values = []
     for r in reward_weights:
         env._state_rewards = r
         env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
-        mode_partition_values.append(
+        mode_log_partition_values.append(
             maxent_log_partition(
                 env_padded, max_path_length, env_padded.state_rewards, None, None, True,
             )
@@ -78,29 +78,26 @@ def mixture_ll_maxent(env, rollouts, zij, reward_weights):
 
     total_ll = 0
     # Sweep all paths
-    for r in rollouts:
+    for n in range(num_paths):
 
-        # Find the likelihood of htis
-        path_likelihood = 0
-        for mode in range(num_modes):
-            # Slice out mode params
-            mode_weight = np.sum(zij[mode])
-            mode_reward = reward_weights[mode]
-            mode_partition = mode_partition_values[mode]
+        path = rollouts[n]
+        path_mode_probs = []
+        for k in range(num_modes):
 
-            env_padded._state_reward = mode_reward
+            mode_weight = np.sum(zij[:, k])
+            mode_reward = reward_weights[k]
+            mode_log_parition = mode_log_partition_values[k]
 
-            # Get log probability of this path under this mode
-            maxent_path_logprob = (
-                env.path_log_probability(r) + r_tau(env_padded, r) - mode_partition
+            env._state_rewards = mode_reward
+
+            # Find likelihood of this path under this reward
+            path_prob = np.exp(
+                env.path_log_probability(path) + r_tau(env, path) - mode_log_parition
             )
 
-            # Find the likelihood of this path under this mode
-            path_mode_likelihood = mode_weight * np.exp(maxent_path_logprob)
-            path_likelihood += path_mode_likelihood
+            path_mode_probs.append(mode_weight * path_prob)
 
-        # This path's log probability is the log of the sum of it's probabilites under each mode
-        total_ll += np.log(path_likelihood)
+        total_ll += np.log(np.sum(path_mode_probs))
 
     return total_ll
 
