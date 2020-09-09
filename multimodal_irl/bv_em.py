@@ -110,6 +110,8 @@ def bv_em_maxent(
     initial_reward_weights=None,
     max_iterations=100,
     min_weight_change=1e-6,
+    after_estep=None,
+    after_mstep=None,
 ):
     """Solve a multi-modal IRL problem using the Babes-Vroman EM alg with MaxEnt IRL
     
@@ -129,6 +131,12 @@ def bv_em_maxent(
         max_iterations (int): Maximum number of EM iterations to perform
         min_weight_change (float): Stop EM iterations when the change in mode weights
             fall below this value
+        after_mstep (function): Optional callback called after each E-Step. Function
+            should accept as arguments the current responsibility matrix and reward
+            weights
+        after_mstep (function): Optional callback called after each M-Step. Function
+            should accept as arguments the current responsibility matrix and reward
+            weights
     
     Returns:
         (int): Number of iterations performed until convergence
@@ -184,6 +192,9 @@ def bv_em_maxent(
         # E-step: Solve for responsibility matrix
         zij = responsibilty_matrix_maxent(env, rollouts, reward_weights, mode_weights)
 
+        if after_estep is not None:
+            after_estep(zij, reward_weights)
+
         # M-step: Update mode weights and reward estimates
         old_mode_weights = copy.copy(mode_weights)
         mode_weights = np.sum(zij, axis=0) / num_paths
@@ -203,6 +214,9 @@ def bv_em_maxent(
 
         delta = np.max(np.abs(old_mode_weights - mode_weights))
         print(", Δ:{}".format(delta))
+
+        if after_mstep is not None:
+            after_mstep(zij, reward_weights)
 
         if delta <= min_weight_change:
             print("EM mode wights have converged, stopping")
