@@ -1,6 +1,7 @@
 import copy
 import warnings
 import numpy as np
+import networkx as nx
 import itertools as it
 
 from itertools import combinations, permutations
@@ -14,77 +15,80 @@ from explicit_env.soln import (
 from unimodal_irl.experiments.metrics import ile_evd
 
 
-def exclusive_pairings(l1, l2):
-    """Generate exclusive pairings of items from two sets
+def miles(w1, w2, ile, use_int=True, significant_figures=5):
+    """MILES metric
     
-    N.b. sets do not need to be the same size
-    
-    Args:
-        l1 (list): First set of items
-        l2 (list): Second set of items
-    
-    Yields:
-        (tuple): Tuple containing the next pairing of items from the list
-    """
-
-    num_elements = min(len(l1), len(l2))
-    combs = list(combinations(l1, num_elements))
-    perms = list(permutations(l2, num_elements))
-
-    for c in combs:
-        for p in perms:
-            yield tuple(zip(c, p))
-
-
-def miles(env_, gt_rewards, learned_rewards):
-    """Compute Min ILE Sum Index
+    Reference for min cost flow solver: https://networkx.github.io/documentation/stable/reference/algorithms/generated/networkx.algorithms.flow.min_cost_flow.html?highlight=min_cost_flow
     
     Args:
-        env_ (explicit_env.IExplicitEnv): Environment defining dynamics and discount
-            factor
-        gt_rewards (list): List of ground truth rewards
-        learned_rewards (list): List of learned rewards
+        w1 (1D float array): Weights of the learned models
+        w2 (1D float array): Weights of the ground-truth models
+        ile (2D float array: ile[i, j] is the ILE for the learned model i wrt true
+            model j
+        
+        use_int (bool): If true, convert parameters to integers using significant_figures
+            to avoid floating point rounding errors that can prevent convergence.
+        significant_figures (int): The solver for the underlying min cost flow network
+            problem may not converge for certain floating point weights and capacities.
+            A solution is to convert weights and capacities to integers by scaling them
+            by a large constant. This achieves convergence at the cost of some accuracy.
+            This arguments sets the significant figures (the order of magnitude used for
+            the integer scaling). Values too large may lead to float overflow.
     
     Returns:
-        (float): Minimum ILE Sum (MILES) metric
-        (list): List of ILE Sums for each pairing of rewards
+        (float): The MILESv2 metric
+        (dict): Flow dictionary describing how the score is computed
     """
+    scale = 10 ** significant_figures if use_int else 1.0
+    ile = np.array(ile) * scale
+    w1 = np.array(w1) * scale
+    w2 = np.array(w2) * scale
 
-    # Copy rewards to environments up-front
-    # And pre-compute optimal policy values
-    gt_envs = []
-    gt_env_opt_pol_values = []
-    for gt_r in gt_rewards:
-        env__ = copy.deepcopy(env_)
-        env__._state_rewards = gt_r
-        gt_envs.append(env__)
+    # Convert edge values to integers to ensure convergence
+    if use_int:
+        ile = ile.astype(np.uint64)
+        w1 = w1.astype(np.uint64)
+        w2 = w2.astype(np.uint64)
 
-        pi = OptimalPolicy(q_from_v(value_iteration(env__), env__), stochastic=False)
-        pi_v = policy_evaluation(env__, pi)
-        gt_env_opt_pol_values.append(pi_v)
+        # Compensate for rounding errors
+        w1_sum, w2_sum = w1.sum(), w2.sum()
+        if w1_sum < w2_sum:
+            w1[0] += w2_sum - w1_sum
+        else:
+            w2[0] += w1_sum - w2_sum
 
-    learned_envs = []
-    for learned_r in learned_rewards:
-        env__ = copy.deepcopy(env_)
-        env__._state_rewards = learned_r
-        learned_envs.append(env__)
+    start_demand = -1.0 * w1.sum()
+    terminal_demand = 1.0 * w2.sum()
+    dense_edge_capacities = 1.0 * w1.sum()
 
-    sum_iles = []
-    for pairing in exclusive_pairings(range(len(gt_envs)), range(len(learned_envs))):
-        sum_iles.append(
-            np.sum(
-                [
-                    ile_evd(
-                        gt_envs[i],
-                        learned_envs[j],
-                        optimal_policy_value=gt_env_opt_pol_values[i],
-                    )[0]
-                    for (i, j) in pairing
-                ]
+    lnames = ["l%d" % (i) for i in range(len(w1))]
+    gnames = ["g%d" % (j) for j in range(len(w2))]
+
+    G = nx.DiGraph()
+    G.add_node("s", demand=start_demand)
+    G.add_node("t", demand=terminal_demand)
+
+    for i in range(len(w1)):
+        G.add_edge("s", lnames[i], weight=0, capacity=w1[i])
+    for j in range(len(w2)):
+        G.add_edge(gnames[j], "t", weight=0, capacity=w2[j])
+
+    for i in range(len(w1)):
+        for j in range(len(w2)):
+            G.add_edge(
+                lnames[i], gnames[j], weight=ile[i][j], capacity=dense_edge_capacities
             )
-        )
 
-    return np.min(sum_iles), sum_iles
+    flow_dict = nx.min_cost_flow(G)
+
+    if use_int:
+        # Scale flowdict back to floating point
+        for n2, d in flow_dict.items():
+            for n2 in d:
+                d[n2] /= scale
+
+    cost = nx.cost_of_flow(G, flow_dict) / scale
+    return cost, flow_dict
 
 
 def soft_contingency_table(resp1, resp2):
@@ -260,3 +264,19 @@ def adjusted_normalized_information_distance(resp1, resp2, num_samples=1000):
         (contingency_mutual_info(cont) - e_mi)
         / (max(responsibility_entropy(resp1), responsibility_entropy(resp2)) - e_mi)
     )
+
+
+def main():
+    """Main function"""
+
+    m2, flowdict = miles([0.7, 0.3], [0.3, 0.7], [[1, 4], [2, 1]])
+    print(m2, flowdict)
+    print()
+
+    m2, flowdict = miles([0.7, 0.3], [0.3, 0.7], [[1, 4], [2, 1]], use_int=True)
+    print(m2, flowdict)
+    print()
+
+
+if __name__ == "__main__":
+    main()
