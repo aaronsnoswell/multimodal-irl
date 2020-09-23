@@ -11,7 +11,7 @@ from joblib import Parallel, delayed
 
 from puddle_world.envs import CanonicalPuddleWorldEnv
 
-from multimodal_irl.bv_em import reward_weights_from_feature_clusters, bv_em_maxent
+from multimodal_irl.bv_em import init_from_feature_clusters, bv_em_maxent
 
 
 def pw_exp(
