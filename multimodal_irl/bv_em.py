@@ -6,10 +6,12 @@ import warnings
 import numpy as np
 import itertools as it
 
+from sklearn.cluster import KMeans
+from sklearn.mixture import GaussianMixture
 
 from explicit_env.soln import value_iteration, q_from_v, BoltzmannExplorationPolicy
 from unimodal_irl import sw_maxent_irl
-from unimodal_irl.utils import pad_terminal_mdp
+from unimodal_irl.utils import pad_terminal_mdp, empirical_feature_expectations
 from unimodal_irl.sw_maxent_irl import maxent_path_logprobs, maxent_log_partition, r_tau
 
 
@@ -233,3 +235,64 @@ def bv_em_maxent(
             break
 
     return (_it + 1), zij, mode_weights, np.array(reward_weights)
+
+
+def reward_weights_from_feature_clusters(
+    env, rollouts, num_modes, init="uniform", num_init_restarts=5000, verbose=False
+):
+
+    # Build feature matrix
+    rollout_features = np.array(
+        [empirical_feature_expectations(env, [r])[0] for r in rollouts]
+    )
+
+    if init == "uniform":
+
+        # Don't do any up-front clustering, let the MM-IRL algorithm
+        # determine a uniform initial clustering
+        initial_reward_weights = None
+
+    else:
+
+        if init == "kmeans":
+
+            # Initialize mode weights with K-Means (hard) clustering
+            km = KMeans(n_clusters=num_modes, n_init=num_init_restarts)
+            hard_initial_clusters = km.fit_predict(rollout_features)
+            soft_initial_clusters = np.zeros((len(rollouts), num_modes))
+            for idx, clstr in enumerate(hard_initial_clusters):
+                soft_initial_clusters[idx, clstr] = 1.0
+
+        elif init == "gmm":
+
+            # Initialize mode weights with GMM (soft) clustering
+            gmm = GaussianMixture(n_components=num_modes, n_init=num_init_restarts,)
+            gmm.fit(rollout_features)
+            soft_initial_clusters = gmm.predict_proba(rollout_features)
+
+        else:
+            raise ValueError(f"Unknown argument for init: {init}")
+
+        if verbose:
+            print("Initial clusters:", flush=True)
+            print(soft_initial_clusters, flush=True)
+
+        # Compute initial reward weights from up-front clustering
+        env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
+        initial_reward_weights = []
+        for m in range(num_modes):
+            initial_reward_weights.append(
+                sw_maxent_irl(
+                    rollouts_padded,
+                    env_padded,
+                    rs=env.state_rewards is not None,
+                    rsa=env.state_action_rewards is not None,
+                    rsas=env.state_action_state_rewards is not None,
+                    rbound=env.reward_range,
+                    with_dummy_state=True,
+                    grad_twopoint=True,
+                    path_weights=soft_initial_clusters[:, m],
+                )[0][:-1]
+            )
+
+    return initial_reward_weights
