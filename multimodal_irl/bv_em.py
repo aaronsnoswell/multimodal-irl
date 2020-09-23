@@ -112,6 +112,7 @@ def bv_em_maxent(
     min_weight_change=1e-6,
     after_estep=None,
     after_mstep=None,
+    verbose=False,
 ):
     """Solve a multi-modal IRL problem using the Babes-Vroman EM alg with MaxEnt IRL
     
@@ -137,6 +138,7 @@ def bv_em_maxent(
         after_mstep (function): Optional callback called after each M-Step. Function
             should accept as arguments the current responsibility matrix and reward
             weights
+        verbose (bool): Print progress information
     
     Returns:
         (int): Number of iterations performed until convergence
@@ -186,8 +188,9 @@ def bv_em_maxent(
         reward_weights = m2
 
     for _it in it.count():
-        print("EM Iteration {}".format(_it + 1), end="")
-        print(", Weights:{}".format(mode_weights), end="")
+        if verbose:
+            print("EM Iteration {}".format(_it + 1), end="", flush=True)
+            print(", Weights:{}".format(mode_weights), end="", flush=True)
 
         # E-step: Solve for responsibility matrix
         zij = responsibilty_matrix_maxent(env, rollouts, reward_weights, mode_weights)
@@ -213,17 +216,20 @@ def bv_em_maxent(
             reward_weights[m] = theta_s[:-1]
 
         delta = np.max(np.abs(old_mode_weights - mode_weights))
-        print(", Δ:{}".format(delta))
+        if verbose:
+            print(", Δ:{}".format(delta), flush=True)
 
         if after_mstep is not None:
             after_mstep(zij, reward_weights)
 
         if delta <= min_weight_change:
-            print("EM mode wights have converged, stopping")
+            if verbose:
+                print("EM mode wights have converged, stopping", flush=True)
             break
 
         if _it == max_iterations - 1:
-            print("Reached maximum number of EM iterations, stopping")
+            if verbose:
+                print("Reached maximum number of EM iterations, stopping", flush=True)
             break
 
     return (_it + 1), zij, mode_weights, np.array(reward_weights)
