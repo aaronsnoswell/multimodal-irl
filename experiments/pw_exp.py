@@ -66,13 +66,14 @@ def pw_exp(
 
     # Begin experiment
     t0 = datetime.now()
-    initial_reward_weights = reward_weights_from_feature_clusters(
+    initial_mode_weights, initial_reward_weights = init_from_feature_clusters(
         _env, rollouts, num_learned_modes, init=init, verbose=verbose
     )
     num_iterations, responsibility_matrix, _, reward_weights = bv_em_maxent(
         _env,
         rollouts,
         num_learned_modes,
+        initial_mode_weights=initial_mode_weights,
         initial_reward_weights=initial_reward_weights,
         verbose=verbose,
     )
