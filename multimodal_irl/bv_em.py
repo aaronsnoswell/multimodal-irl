@@ -237,9 +237,25 @@ def bv_em_maxent(
     return (_it + 1), zij, mode_weights, np.array(reward_weights)
 
 
-def reward_weights_from_feature_clusters(
-    env, rollouts, num_modes, init="uniform", num_init_restarts=5000, verbose=False
-):
+def init_from_feature_clusters(env, rollouts, num_modes, init="uniform", verbose=False):
+    """Compute a MM-IRL initialization by clustering in feature space
+    
+    For now, only supports state-based reward features
+    
+    Args:
+        env (explicit_env.IExplicitEnv): Environment defining dynamics
+        rollouts (list): List of state-action demonstration rollouts
+        num_modes (int): Number of modes to cluster into
+        init (str): Clustering method, one of 'uniform', 'gmm', 'kmeans'
+        verbose (bool): Print progress information
+    
+    Returns:
+        (numpy array): |K| Vector of initial mode weights
+        (numpy array): |K|x|S| Array of initial reward weights
+    """
+
+    # How many times to restart the initialization method?
+    NUM_INIT_RESTARTS = 5000
 
     # Build feature matrix
     rollout_features = np.array(
@@ -250,14 +266,16 @@ def reward_weights_from_feature_clusters(
 
         # Don't do any up-front clustering, let the MM-IRL algorithm
         # determine a uniform initial clustering
+        # TODO replace with actual soft clustering
         initial_reward_weights = None
 
+        initial_mode_weights = np.ones(num_modes) / num_modes
     else:
 
         if init == "kmeans":
 
             # Initialize mode weights with K-Means (hard) clustering
-            km = KMeans(n_clusters=num_modes, n_init=num_init_restarts)
+            km = KMeans(n_clusters=num_modes, n_init=NUM_INIT_RESTARTS)
             hard_initial_clusters = km.fit_predict(rollout_features)
             soft_initial_clusters = np.zeros((len(rollouts), num_modes))
             for idx, clstr in enumerate(hard_initial_clusters):
@@ -266,7 +284,7 @@ def reward_weights_from_feature_clusters(
         elif init == "gmm":
 
             # Initialize mode weights with GMM (soft) clustering
-            gmm = GaussianMixture(n_components=num_modes, n_init=num_init_restarts,)
+            gmm = GaussianMixture(n_components=num_modes, n_init=NUM_INIT_RESTARTS,)
             gmm.fit(rollout_features)
             soft_initial_clusters = gmm.predict_proba(rollout_features)
 
@@ -276,6 +294,9 @@ def reward_weights_from_feature_clusters(
         if verbose:
             print("Initial clusters:", flush=True)
             print(soft_initial_clusters, flush=True)
+
+        # Compute initial mode weights from soft clustering
+        initial_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
 
         # Compute initial reward weights from up-front clustering
         env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
@@ -295,4 +316,4 @@ def reward_weights_from_feature_clusters(
                 )[0][:-1]
             )
 
-    return initial_reward_weights
+    return initial_mode_weights, initial_reward_weights
