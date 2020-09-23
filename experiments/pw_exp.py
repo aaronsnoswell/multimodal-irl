@@ -185,45 +185,37 @@ if __name__ == "__main__":
     # Unique results filename for this experiment
     RESULTS_FILENAME = f"cmd-{ENVIRONMENT}-{TRANSITIONS}-{NUM_GT_CLUSTERS}-{INITIALISATION}-{NUM_ROLLOUTS_PER_MODE}-{NUM_CLUSTERS}.csv"
 
-    # Run experiment
-    if args.num_replicates == 1:
-        # Run a single replicate
-        results = [
-            pw_exp(
-                args.rollouts_per_gt_mode,
-                args.num_learned_modes,
-                args.init,
-                0,
-                args.stochastic,
-                args.three_gt_modes,
-                verbose=True,
-            )
-        ]
+    # Try and determine how many CPUs we are allowed to use
+    num_cpus = (
+        len(os.sched_getaffinity(0))
+        # Ask the (linux) OS how many CPUs wer are scheduled to use
+        if "sched_getaffinity" in dir(os)
+        # If we can't find our scheduled number of CPUs, just use one less than the
+        # system's physical socket count - leave one for GUI, bookkeeping etc.
+        else os.cpu_count() - 1
+    )
 
-    else:
-        # Parallelize over replicates
-        num_jobs = (
-            len(os.sched_getaffinity(0))
-            if "sched_getaffinity" in dir(os)
-            else os.cpu_count() - 1
-        )
+    # Determine how many CPUs we actually need
+    num_jobs = max(min(num_cpus, args.num_replicates), 1)
+    if num_jobs > 1:
         print(f"Parallelizing over {num_jobs} CPU(s)", flush=True)
 
-        results = Parallel(
-            n_jobs=num_jobs,
-            # prefer="threads"
-        )(
-            delayed(pw_exp)(
-                args.rollouts_per_gt_mode,
-                args.num_learned_modes,
-                args.init,
-                replicate,
-                args.stochastic,
-                args.three_gt_modes,
-                verbose=True,
-            )
-            for replicate in range(args.num_replicates)
+    # Parallelize over replicates
+    results = Parallel(
+        n_jobs=num_jobs,
+        # prefer="threads"
+    )(
+        delayed(pw_exp)(
+            args.rollouts_per_gt_mode,
+            args.num_learned_modes,
+            args.init,
+            replicate,
+            args.stochastic,
+            args.three_gt_modes,
+            verbose=True,
         )
+        for replicate in range(args.num_replicates)
+    )
 
     # Copy results to dataframe
     for ri, r in enumerate(results):
