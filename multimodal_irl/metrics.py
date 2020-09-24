@@ -15,16 +15,59 @@ from explicit_env.soln import (
 from unimodal_irl.experiments.metrics import ile_evd
 
 
-def miles(w1, w2, ile, use_int=True, significant_figures=5):
-    """MILES metric
+def mean_error_metric(resp_learned, resp_gt, error_mat):
+    """Average an error metric (learned wrt. GT) across all demonstration path
+    
+    This metric is used by Choi and Kim, 2012 in
+    Nonparametric Bayesian Inverse Reinforcement Learning for Multiple Reward Functions.
+    
+    Args:
+        resp_learned (numpy array): |N|x|K_1| Learned path responsibility matrix
+        resp_gt (numpy array): |N|x|K_2| Ground Truth path responsibility matrix
+        
+        error_mat (numpy array): evd[i, j] is the error metric for the learned model i
+            wrt. true model j.
+    
+    Returns:
+        (float): The average of the EVD for each trajectory
+    """
+
+    resp_learned = np.array(resp_learned)
+    resp_gt = np.array(resp_gt)
+    error_mat = np.array(error_mat)
+
+    assert len(resp_gt) == len(
+        resp_learned
+    ), "Number of paths (rows in responsibility matrices) is not consistent."
+
+    errors = []
+    for path_idx in range(len(resp_gt)):
+        learned_mode_weights = resp_learned[path_idx]
+        gt_mode_weights = resp_gt[path_idx]
+
+        err_sum = 0
+        for (li, lw), (gi, gw) in it.product(
+            enumerate(learned_mode_weights), enumerate(gt_mode_weights)
+        ):
+            err_sum += lw * gw * error_mat[li, gi]
+        errors.append(err_sum)
+
+    err_avg = np.mean(errors)
+    return err_avg
+
+
+def min_cost_flow_error_metric(
+    resp_learned, resp_gt, error_mat, use_int=True, significant_figures=5
+):
+    """Minimum Cost Flow error metric proposed by us
     
     Reference for min cost flow solver: https://networkx.github.io/documentation/stable/reference/algorithms/generated/networkx.algorithms.flow.min_cost_flow.html?highlight=min_cost_flow
     
     Args:
         w1 (1D float array): Weights of the learned models
         w2 (1D float array): Weights of the ground-truth models
-        ile (2D float array: ile[i, j] is the ILE for the learned model i wrt true
-            model j
+        error_mat (2D float array: ile[i, j] is the error for the learned model i wrt
+            true model j
         
         use_int (bool): If true, convert parameters to integers using significant_figures
             to avoid floating point rounding errors that can prevent convergence.
@@ -36,47 +79,55 @@ def miles(w1, w2, ile, use_int=True, significant_figures=5):
             the integer scaling). Values too large may lead to float overflow.
     
     Returns:
-        (float): The MILESv2 metric
+        (float): The Minimum cost flow error metric
         (dict): Flow dictionary describing how the score is computed
     """
+    resp_learned = np.array(resp_learned)
+    w_learned = np.sum(resp_learned, axis=0) / len(resp_learned)
+    resp_gt = np.array(resp_gt)
+    w_gt = np.sum(resp_gt, axis=0) / len(resp_gt)
+
     scale = 10 ** significant_figures if use_int else 1.0
-    ile = np.array(ile) * scale
-    w1 = np.array(w1) * scale
-    w2 = np.array(w2) * scale
+    error_mat = np.array(error_mat) * scale
+    w_learned = np.array(w_learned) * scale
+    w_gt = np.array(w_gt) * scale
 
     # Convert edge values to integers to ensure convergence
     if use_int:
-        ile = ile.astype(np.uint64)
-        w1 = w1.astype(np.uint64)
-        w2 = w2.astype(np.uint64)
+        error_mat = error_mat.astype(np.uint64)
+        w_learned = w_learned.astype(np.uint64)
+        w_gt = w_gt.astype(np.uint64)
 
         # Compensate for rounding errors
-        w1_sum, w2_sum = w1.sum(), w2.sum()
-        if w1_sum < w2_sum:
-            w1[0] += w2_sum - w1_sum
+        w_learned_sum, w_gt_sum = w_learned.sum(), w_gt.sum()
+        if w_learned_sum < w_gt_sum:
+            w_learned[0] += w_gt_sum - w_learned_sum
         else:
-            w2[0] += w1_sum - w2_sum
+            w_gt[0] += w_learned_sum - w_gt_sum
 
-    start_demand = -1.0 * w1.sum()
-    terminal_demand = 1.0 * w2.sum()
-    dense_edge_capacities = 1.0 * w1.sum()
+    start_demand = -1.0 * w_learned.sum()
+    terminal_demand = 1.0 * w_gt.sum()
+    dense_edge_capacities = 1.0 * w_learned.sum()
 
-    lnames = ["l%d" % (i) for i in range(len(w1))]
-    gnames = ["g%d" % (j) for j in range(len(w2))]
+    lnames = ["l%d" % (i) for i in range(len(w_learned))]
+    gnames = ["g%d" % (j) for j in range(len(w_gt))]
 
     G = nx.DiGraph()
     G.add_node("s", demand=start_demand)
     G.add_node("t", demand=terminal_demand)
 
-    for i in range(len(w1)):
-        G.add_edge("s", lnames[i], weight=0, capacity=w1[i])
-    for j in range(len(w2)):
-        G.add_edge(gnames[j], "t", weight=0, capacity=w2[j])
+    for i in range(len(w_learned)):
+        G.add_edge("s", lnames[i], weight=0, capacity=w_learned[i])
+    for j in range(len(w_gt)):
+        G.add_edge(gnames[j], "t", weight=0, capacity=w_gt[j])
 
-    for i in range(len(w1)):
-        for j in range(len(w2)):
+    for i in range(len(w_learned)):
+        for j in range(len(w_gt)):
             G.add_edge(
-                lnames[i], gnames[j], weight=ile[i][j], capacity=dense_edge_capacities
+                lnames[i],
+                gnames[j],
+                weight=error_mat[i][j],
+                capacity=dense_edge_capacities,
             )
 
     flow_dict = nx.min_cost_flow(G)
@@ -267,15 +318,32 @@ def adjusted_normalized_information_distance(resp1, resp2, num_samples=1000):
 
 
 def main():
-    """Main function"""
+    """Test metrics"""
 
-    m2, flowdict = miles([0.7, 0.3], [0.3, 0.7], [[1, 4], [2, 1]])
-    print(m2, flowdict)
-    print()
+    resp_gt = [
+        [1.0, 0.0],
+        [1.0, 0.0],
+        [0.0, 1.0],
+        [0.0, 1.0],
+    ]
 
-    m2, flowdict = miles([0.7, 0.3], [0.3, 0.7], [[1, 4], [2, 1]], use_int=True)
-    print(m2, flowdict)
-    print()
+    resp_learned = [
+        [0.5, 0.5, 0.0],
+        [0.5, 0.5, 0.0],
+        [0.1, 0.5, 0.4],
+        [0.1, 0.5, 0.4],
+    ]
+
+    # Learned wrt. Ground Truth
+    error_mat = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]
+
+    min_cost_flow, _ = min_cost_flow_error_metric(
+        resp_learned, resp_gt, error_mat, use_int=True
+    )
+    print(min_cost_flow)
+
+    mean_error = mean_error_metric(resp_learned, resp_gt, error_mat)
+    print(mean_error)
 
 
 if __name__ == "__main__":
