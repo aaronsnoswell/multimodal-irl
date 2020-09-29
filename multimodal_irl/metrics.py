@@ -4,16 +4,6 @@ import numpy as np
 import networkx as nx
 import itertools as it
 
-from itertools import combinations, permutations
-
-from explicit_env.soln import (
-    value_iteration,
-    q_from_v,
-    OptimalPolicy,
-    policy_evaluation,
-)
-from unimodal_irl.experiments.metrics import ile_evd
-
 
 def mean_error_metric(resp_learned, resp_gt, error_mat):
     """Average an error metric (learned wrt. GT) across all demonstration path
@@ -29,7 +19,7 @@ def mean_error_metric(resp_learned, resp_gt, error_mat):
             wrt. true model j.
     
     Returns:
-        (float): The average of the EVD for each trajectory
+        (float): The average of the error for each trajectory
     """
 
     resp_learned = np.array(resp_learned)
