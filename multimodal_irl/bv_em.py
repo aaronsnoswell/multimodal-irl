@@ -81,57 +81,118 @@ def responsibilty_matrix_maxent(
     return resp
 
 
-def mixture_ll_maxent(env, rollouts, zij, reward_weights):
-    """Find the log-likelihood of a MaxEnt MM-IRL mixture mode"""
+def mixture_ll_maxent(
+    env,
+    rollouts,
+    mode_weights,
+    mode_state_reward_parameters=None,
+    mode_state_action_reward_parameters=None,
+    mode_state_action_state_reward_parameters=None,
+):
+    """Find the log-likelihood of a MaxEnt mixture model
+    
+    This is the average over all paths of the log-likelihood of each path. That is
+    
+    $$
+        \mathcal{L}(D \mid \Theta) =
+            \frac{1}{|D|}
+            \sum_{\tau \in \Data}
+            \log
+            \sum_{k=1}^K
+            \alpha_k
+            ~
+            p(\tau \mid \theta_k)
+    $$
+    
+    Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
+    for that mixture component
+    
+    Args:
+        env (explicit_env.IExplicitEnv): Environment defining dynamics
+        rollouts (list): List of state-action rollouts
+        mode_weights (list): List of prior probabilities for each mode
+        
+        mode_state_reward_parameters (list): List of |S| state reward parameter vectors
+        mode_state_reward_parameters (list): List of |S|x|A| state-action reward parameter vectors
+        mode_state_reward_parameters (list): List of |S|x|A|x|S| state-action-state reward parameter vectors
+    
+    Returns:
+        (float): Log Likelihood of the rollouts under the given mixture model
+    """
+
+    assert (
+        mode_state_reward_parameters is not None
+        or mode_state_action_reward_parameters is not None
+        or mode_state_action_state_reward_parameters is not None
+    ), "Must provide at least one reward parameter collection"
 
     env = copy.deepcopy(env)
+    num_modes = len(mode_weights)
 
-    num_paths, num_modes = zij.shape
+    # Convert missing reward parameter arguments to lists of 'None'
+    if mode_state_reward_parameters is None:
+        mode_state_reward_parameters = [None for _ in range(num_modes)]
+    if mode_state_action_reward_parameters is None:
+        mode_state_action_reward_parameters = [None for _ in range(num_modes)]
+    if mode_state_action_state_reward_parameters is None:
+        mode_state_action_state_reward_parameters = [None for _ in range(num_modes)]
 
-    num_states = len(env.states)
-    num_actions = len(env.actions)
-
-    # Find max path length
-    if len(rollouts) == 1:
-        max_path_length = min_path_length = len(rollouts[0])
-    else:
-        max_path_length = max(*[len(r) for r in rollouts])
+    assert (
+        len(mode_state_reward_parameters)
+        == len(mode_state_action_reward_parameters)
+        == len(mode_state_action_state_reward_parameters)
+        == num_modes
+    ), "Provided number of reward parameters does not match number of modes in responsibility matrix"
 
     # Pre-compute the partition values for each reward parameter
+    max_path_length = (
+        len(rollouts[0]) if len(rollouts) == 1 else max(*[len(r) for r in rollouts])
+    )
     mode_log_partition_values = []
-    for r in reward_weights:
-        env._state_rewards = r
+    for mode in range(num_modes):
+        env._state_rewards = mode_state_reward_parameters[mode]
+        env._state_action_rewards = mode_state_action_reward_parameters[mode]
+        env._state_action_state_rewards = mode_state_action_state_reward_parameters[
+            mode
+        ]
         env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
         mode_log_partition_values.append(
             maxent_log_partition(
-                env_padded, max_path_length, env_padded.state_rewards, None, None, True,
+                env_padded,
+                max_path_length,
+                env_padded.state_rewards,
+                env_padded.state_action_rewards,
+                env_padded.state_action_state_rewards,
+                True,
             )
         )
 
-    total_ll = 0
-    # Sweep all paths
-    for n in range(num_paths):
+    # Model Log Likelihood is a sum over rollouts
+    ll = 0
+    for ri, r in enumerate(rollouts):
 
-        path = rollouts[n]
-        path_mode_probs = []
-        for k in range(num_modes):
+        # Path Likelihood is the log of a sum over modes
+        l_rollout_permode = []
+        for mode in range(num_modes):
 
-            mode_weight = np.sum(zij[:, k])
-            mode_reward = reward_weights[k]
-            mode_log_parition = mode_log_partition_values[k]
+            env._state_rewards = mode_state_reward_parameters[mode]
+            env._state_action_rewards = mode_state_action_reward_parameters[mode]
+            env._state_action_state_rewards = mode_state_action_state_reward_parameters[
+                mode
+            ]
 
-            env._state_rewards = mode_reward
+            q = np.exp(env.path_log_probability(r))
 
-            # Find likelihood of this path under this reward
-            path_prob = np.exp(
-                env.path_log_probability(path) + r_tau(env, path) - mode_log_parition
-            )
+            mode_weight = mode_weights[mode]
+            path_prob_me = np.exp(r_tau(env, r))
+            z_theta = np.exp(mode_log_partition_values[mode])
+            l_rollout_mode = mode_weight * q * path_prob_me / z_theta
+            l_rollout_permode.append(l_rollout_mode)
+        l_rollout = np.sum(l_rollout_permode)
+        ll_rollout = np.log(l_rollout)
+        ll += ll_rollout / len(rollouts)
 
-            path_mode_probs.append(mode_weight * path_prob)
-
-        total_ll += np.log(np.sum(path_mode_probs))
-
-    return total_ll
+    return ll
 
 
 def bv_em_maxent(
