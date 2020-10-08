@@ -27,15 +27,17 @@ def responsibilty_matrix_maxent(
     """Compute responsibility matrix using MaxEnt distribution
     
     Args:
-        env (gym.Env): Environment to solve for
+        env (gym.Env): Environment providing dynamics
         rollouts (list): List of rollouts
         num_modes (int): Number of modes
         state_reward_weights (list): List of state reward weight vectors
         state_action_reward_weights (list): List of state-action reward weight vectors
         state_action_state_reward_weights (list): List of state-action-state reward weight vectors
         
-        mode_weights (numpy array): Optional list of mode weights
+        mode_weights (numpy array): Optional list of mode weights, defaults to uniform
     """
+
+    env = copy.deepcopy(env)
 
     assert (
         state_reward_weights is not None
@@ -43,10 +45,10 @@ def responsibilty_matrix_maxent(
         or state_action_state_reward_weights is not None
     ), "Must provided at least one reward weight parameter"
 
-    zij = np.ones((len(rollouts), num_modes))
+    resp = np.ones((len(rollouts), num_modes))
 
     if mode_weights is None:
-        mode_weights = np.ones(num_modes, dtype=float)
+        mode_weights = np.ones(num_modes, dtype=float) / num_modes
 
     for m in range(num_modes):
         # Use Maximum Entropy distribution for computing path likelihoods
@@ -61,7 +63,7 @@ def responsibilty_matrix_maxent(
         env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
 
         # Compute path likelihoods
-        zij[:, m] = mode_weights[m] * np.exp(
+        resp[:, m] = mode_weights[m] * np.exp(
             maxent_path_logprobs(
                 env_padded,
                 rollouts_padded,
@@ -74,9 +76,9 @@ def responsibilty_matrix_maxent(
 
     # Each path (row of the assignment matrix) gets a mass of 1 to allocate between
     # modes
-    zij /= np.sum(zij, axis=1, keepdims=True)
+    resp /= np.sum(resp, axis=1, keepdims=True)
 
-    return zij
+    return resp
 
 
 def mixture_ll_maxent(env, rollouts, zij, reward_weights):
