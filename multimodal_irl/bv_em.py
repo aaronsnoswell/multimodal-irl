@@ -35,6 +35,10 @@ def responsibilty_matrix_maxent(
         state_action_state_reward_weights (list): List of state-action-state reward weight vectors
         
         mode_weights (numpy array): Optional list of mode weights, defaults to uniform
+    
+    Returns:
+        (numpy array): NxK responsibility matrix (a soft clustering of the provided
+            paths under the given MaxEnt mixture model)
     """
 
     env = copy.deepcopy(env)
@@ -441,10 +445,11 @@ def init_from_feature_clusters(env, rollouts, num_modes, init="uniform", verbose
         verbose (bool): Print progress information
     
     Returns:
-        (numpy array): |K| Vector of initial mode weights
-        (numpy array): |K| list of |S| arrays of initial state reward weights
-        (numpy array): |K| list of |S|x|A| arrays of initial state-action reward weights
-        (numpy array): |K| list of |S|x|A|x|S| arrays of initial state-action-state reward weights
+        (numpy array): NxK initial responsibility matrix
+        (numpy array): K Vector of initial mode weights
+        (numpy array): K list of |S| arrays of initial state reward weights
+        (numpy array): K list of |S|x|A| arrays of initial state-action reward weights
+        (numpy array): K list of |S|x|A|x|S| arrays of initial state-action-state reward weights
     """
 
     # How many times to restart the initialization method?
