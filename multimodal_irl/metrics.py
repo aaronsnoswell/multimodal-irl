@@ -47,7 +47,7 @@ def mean_error_metric(resp_learned, resp_gt, error_mat):
 
 
 def min_cost_flow_error_metric(
-    resp_learned, resp_gt, error_mat, use_int=True, significant_figures=5
+    w_learned, w_gt, error_mat, use_int=True, significant_figures=5
 ):
     """Minimum Cost Flow error metric proposed by us
     
@@ -56,7 +56,7 @@ def min_cost_flow_error_metric(
     Args:
         w1 (1D float array): Weights of the learned models
         w2 (1D float array): Weights of the ground-truth models
-        error_mat (2D float array: ile[i, j] is the error for the learned model i wrt
+        error_mat (2D float array: error_mat[i, j] is the error for the learned model i wrt
             true model j
         
         use_int (bool): If true, convert parameters to integers using significant_figures
@@ -72,10 +72,6 @@ def min_cost_flow_error_metric(
         (float): The Minimum cost flow error metric
         (dict): Flow dictionary describing how the score is computed
     """
-    resp_learned = np.array(resp_learned)
-    w_learned = np.sum(resp_learned, axis=0) / len(resp_learned)
-    resp_gt = np.array(resp_gt)
-    w_gt = np.sum(resp_gt, axis=0) / len(resp_gt)
 
     scale = 10 ** significant_figures if use_int else 1.0
     error_mat = np.array(error_mat) * scale
