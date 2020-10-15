@@ -462,42 +462,39 @@ def init_from_feature_clusters(env, rollouts, num_modes, init="uniform", verbose
 
     if init == "uniform":
 
-        # Don't do any up-front clustering, let the MM-IRL algorithm
-        # determine a uniform initial clustering
-        # TODO replace with actual soft clustering
+        # Use uniform initial clustering
+        soft_initial_clusters = np.ones((len(rollouts), num_modes))
+        soft_initial_clusters /= num_modes
+
+        # Don't learn any initial rewards
         initial_state_reward_weights = None
         initial_state_action_reward_weights = None
         initial_state_action_state_reward_weights = None
 
-        initial_mode_weights = np.ones(num_modes) / num_modes
+    elif init == "kmeans":
+
+        # Initialize mode weights with K-Means (hard) clustering
+        km = KMeans(n_clusters=num_modes, n_init=NUM_INIT_RESTARTS)
+        hard_initial_clusters = km.fit_predict(rollout_features)
+        soft_initial_clusters = np.zeros((len(rollouts), num_modes))
+        for idx, clstr in enumerate(hard_initial_clusters):
+            soft_initial_clusters[idx, clstr] = 1.0
+
+    elif init == "gmm":
+
+        # Initialize mode weights with GMM (soft) clustering
+        gmm = GaussianMixture(n_components=num_modes, n_init=NUM_INIT_RESTARTS,)
+        gmm.fit(rollout_features)
+        soft_initial_clusters = gmm.predict_proba(rollout_features)
+
     else:
+        raise ValueError(f"Unknown argument for init: {init}")
 
-        if init == "kmeans":
+    if verbose:
+        print("Initial clusters:", flush=True)
+        print(soft_initial_clusters, flush=True)
 
-            # Initialize mode weights with K-Means (hard) clustering
-            km = KMeans(n_clusters=num_modes, n_init=NUM_INIT_RESTARTS)
-            hard_initial_clusters = km.fit_predict(rollout_features)
-            soft_initial_clusters = np.zeros((len(rollouts), num_modes))
-            for idx, clstr in enumerate(hard_initial_clusters):
-                soft_initial_clusters[idx, clstr] = 1.0
-
-        elif init == "gmm":
-
-            # Initialize mode weights with GMM (soft) clustering
-            gmm = GaussianMixture(n_components=num_modes, n_init=NUM_INIT_RESTARTS,)
-            gmm.fit(rollout_features)
-            soft_initial_clusters = gmm.predict_proba(rollout_features)
-
-        else:
-            raise ValueError(f"Unknown argument for init: {init}")
-
-        if verbose:
-            print("Initial clusters:", flush=True)
-            print(soft_initial_clusters, flush=True)
-
-        # Compute initial mode weights from soft clustering
-        initial_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
-
+    if init != "uniform":
         # Compute initial reward weights from up-front clustering
         env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
         initial_state_reward_weights = []
@@ -528,7 +525,11 @@ def init_from_feature_clusters(env, rollouts, num_modes, init="uniform", verbose
             initial_state_action_reward_weights.append(r_sa)
             initial_state_action_state_reward_weights.append(r_sas)
 
+    # Compute initial mode weights from soft clustering
+    initial_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
+
     return (
+        soft_initial_clusters,
         initial_mode_weights,
         initial_state_reward_weights,
         initial_state_action_reward_weights,
