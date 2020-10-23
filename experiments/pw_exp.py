@@ -14,6 +14,9 @@ from enum import Enum
 from datetime import datetime
 from joblib import Parallel, delayed
 
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import ImageGrid
+
 from puddle_world.envs import CanonicalPuddleWorldEnv
 from multimodal_irl.bv_em import (
     init_from_feature_clusters,
@@ -25,6 +28,7 @@ from explicit_env.soln import (
     q_from_v,
     OptimalPolicy,
     policy_evaluation,
+    q_value_iteration,
 )
 
 
@@ -361,6 +365,108 @@ def get_experiment_outputs(fixed_inputs, exp, test_inputs):
     }
 
     return result
+
+
+def plot_reward(r, ax=None):
+    """Plot a CanonicalPuddleWorld reward function into the given axes"""
+
+    if ax is None:
+        ax = plt.gca()
+
+    plt.set_cmap("OrRd_r")
+    im = ax.imshow(r.reshape(5, 5), extent=(0, 5, 0, 5), vmin=-10, vmax=0)
+    ax.set_yticks([0, 1, 2, 3, 4, 5])
+    ax.set_xticks([0, 1, 2, 3, 4, 5])
+    ax.grid(True)
+    ax.tick_params(
+        axis="both",
+        which="both",
+        bottom=False,
+        top=False,
+        left=False,
+        right=False,
+        labelleft=False,
+        labelbottom=False,
+    )
+
+    return im
+
+
+def plot_policy(pi, ax=None):
+    """Plot PuddleWorld policy into the given axes"""
+
+    # ACTION_SYMBOLS = ["^", "v", "<", ">"]
+    ACTION_SYMBOLS = ["↑", "↓", "←", "→"]
+    ACTION_DX = [0, 0, -1, 1]
+    ACTION_DY = [1, -1, 0, 0]
+
+    if ax is None:
+        ax = plt.gca()
+
+    for s, (y, x) in enumerate(np.ndindex((5, 5))):
+        plot_y = 5 - y - 0.5
+        plot_x = x + 0.5
+
+        action_probs = pi.prob_for_state(s)
+        for ai, a_prob in enumerate(action_probs):
+            if a_prob == 0:
+                continue
+            offset_scale = -0.2
+            scale = 0.5
+            ax.arrow(
+                plot_x + ACTION_DX[ai] * offset_scale,
+                plot_y + ACTION_DY[ai] * offset_scale,
+                ACTION_DX[ai] * scale,
+                ACTION_DY[ai] * scale,
+                width=0.1,
+                head_width=0.25,
+                head_length=0.15,
+                length_includes_head=True,
+                fc="black",
+                ec=None,
+            )
+
+
+def plot_reward_ensemble(rs, r_weights=None, with_policies=True, fig=None):
+    """Plot a reward ensemble into the given figure"""
+
+    if fig is None:
+        fig = plt.gcf()
+
+    num_rewards = len(rs)
+
+    if r_weights is not None:
+        assert len(r_weights) == num_rewards
+
+    grid = ImageGrid(
+        fig,
+        111,
+        nrows_ncols=(1, num_rewards),
+        axes_pad=0.15,
+        share_all=True,
+        cbar_location="right",
+        cbar_mode="single",
+        cbar_size="7%",
+        cbar_pad=0.15,
+    )
+
+    for ri, r in enumerate(rs):
+        ax = grid[ri]
+        im = plot_reward(r, ax=ax)
+        if r_weights is not None:
+            weight = r_weights[ri]
+            ax.set_title(r"$w = " + f"{weight}" + r"$")
+
+        if with_policies:
+            e = CanonicalPuddleWorldEnv(mode="wet")
+            e._state_rewards = r
+            pi = OptimalPolicy(q_value_iteration(e), stochastic=True, q_precision=3)
+            plot_policy(pi, ax=ax)
+
+    grid[-1].cax.colorbar(im)
+    grid[-1].cax.toggle_label(True)
+
+    return grid
 
 
 if __name__ == "__main__":
