@@ -367,14 +367,14 @@ def get_experiment_outputs(fixed_inputs, exp, test_inputs):
     return result
 
 
-def plot_reward(r, ax=None):
-    """Plot a CanonicalPuddleWorld reward function into the given axes"""
+
+
+def _after_pw_plot(ax=None):
+    """Adjust plot configuration after plotting a PuddleWorld reward/policy"""
 
     if ax is None:
         ax = plt.gca()
 
-    plt.set_cmap("OrRd_r")
-    im = ax.imshow(r.reshape(5, 5), extent=(0, 5, 0, 5), vmin=-10, vmax=0)
     ax.set_yticks([0, 1, 2, 3, 4, 5])
     ax.set_xticks([0, 1, 2, 3, 4, 5])
     ax.grid(True)
@@ -388,6 +388,25 @@ def plot_reward(r, ax=None):
         labelleft=False,
         labelbottom=False,
     )
+
+
+def plot_reward(r, ax=None):
+    """Plot a CanonicalPuddleWorld reward function into the given axes"""
+
+    if ax is None:
+        ax = plt.gca()
+
+    plt.set_cmap("OrRd_r")
+    im = ax.imshow(r.reshape(5, 5), extent=(0, 5, 0, 5), vmin=-10, vmax=0)
+
+    for s, (y, x) in enumerate(np.ndindex((5, 5))):
+        plot_y = 5 - y - 0.05
+        plot_x = x + 0.5
+        state_reward = r[s]
+        txt = "{:+.2f}".format(state_reward)
+        ax.text(plot_x, plot_y, txt, ha="center", va="top", fontsize=7)
+
+    _after_pw_plot(ax)
 
     return im
 
@@ -425,6 +444,8 @@ def plot_policy(pi, ax=None):
                 fc="black",
                 ec=None,
             )
+
+    _after_pw_plot(ax)
 
 
 def plot_reward_ensemble(rs, r_weights=None, with_policies=True, fig=None):
