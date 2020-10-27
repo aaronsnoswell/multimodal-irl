@@ -23,6 +23,7 @@ from multimodal_irl.bv_em import (
     bv_em_maxent,
     responsibilty_matrix_maxent,
 )
+from unimodal_irl.metrics import ile_evd
 from explicit_env.soln import (
     value_iteration,
     q_from_v,
@@ -367,6 +368,45 @@ def get_experiment_outputs(fixed_inputs, exp, test_inputs):
     return result
 
 
+def error_matrices(fixed_inputs, train_inputs, outputs):
+    """Build ILE, EVD error matrices
+    
+    Args:
+        fixed_inputs (dict): Fixed experimental inputs
+        train_inputs (dict): Training data experimental inputs
+        outputs (dict): Experimental outputs
+    
+    Returns:
+        (numpy array): K1xK2 ILE error matrix
+        (numpy array): K1xK2 EVD error matrix
+    """
+
+    ile_mat = np.zeros(
+        (train_inputs["num_learned_modes"], train_inputs["num_gt_modes"])
+    )
+    evd_mat = np.zeros_like(ile_mat)
+
+    for learned_mode_idx in range(train_inputs["num_learned_modes"]):
+        env_learned = copy.deepcopy(fixed_inputs["environment_noreward"])
+        env_learned._state_rewards = outputs["state_reward_parameters_learned"][
+            learned_mode_idx
+        ]
+        for gt_mode_idx in range(train_inputs["num_gt_modes"]):
+            env_gt = fixed_inputs["environments"][gt_mode_idx]
+            gt_optimal_policy_state_value_function_gt = fixed_inputs[
+                "mode_optimal_policy_state_value_functions"
+            ][gt_mode_idx]
+
+            (
+                ile_mat[learned_mode_idx, gt_mode_idx],
+                evd_mat[learned_mode_idx, gt_mode_idx],
+            ) = ile_evd(
+                env_gt,
+                env_learned,
+                optimal_policy_value=gt_optimal_policy_state_value_function_gt,
+            )
+
+    return ile_mat, evd_mat
 
 
 def _after_pw_plot(ax=None):
