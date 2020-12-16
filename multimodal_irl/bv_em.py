@@ -1,537 +1,432 @@
-"""Implements Babes-Vroman style EM MM-IRL Algorithms"""
+"""Implements Babeş-Vroman style EM MM-IRL Algorithms"""
 
 
+import abc
 import copy
 import warnings
 import numpy as np
 import itertools as it
 
+from scipy.optimize import minimize
+from scipy.stats import dirichlet
+
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 
-from explicit_env.soln import value_iteration, q_from_v, BoltzmannExplorationPolicy
-from unimodal_irl import sw_maxent_irl
-from unimodal_irl.utils import pad_terminal_mdp, empirical_feature_expectations
-from unimodal_irl.sw_maxent_irl import maxent_path_logprobs, maxent_log_partition, r_tau
+from unimodal_irl import (
+    sw_maxent_irl,
+    maxent_path_logprobs,
+    nb_backward_pass_log,
+    log_partition,
+    bv_maxlikelihood_irl,
+)
+from mdp_extras import Linear, trajectory_reward, q_vi, BoltzmannExplorationPolicy, v_vi
 
 
-def responsibilty_matrix_maxent(
-    env,
-    rollouts,
-    num_modes,
-    state_reward_weights=None,
-    state_action_reward_weights=None,
-    state_action_state_reward_weights=None,
-    mode_weights=None,
-):
-    """Compute responsibility matrix using MaxEnt distribution
-    
-    Args:
-        env (gym.Env): Environment providing dynamics
-        rollouts (list): List of rollouts
-        num_modes (int): Number of modes
-        state_reward_weights (list): List of state reward weight vectors
-        state_action_reward_weights (list): List of state-action reward weight vectors
-        state_action_state_reward_weights (list): List of state-action-state reward weight vectors
+class EMSolver(abc.ABC):
+    """An abstract base class for a Multi-Modal IRL EM solver"""
+
+    def __init__(self):
+        pass
+
+    def estep(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Compute responsibility matrix using MaxEnt reward parameters
         
-        mode_weights (numpy array): Optional list of mode weights, defaults to uniform
-    
-    Returns:
-        (numpy array): NxK responsibility matrix (a soft clustering of the provided
-            paths under the given MaxEnt mixture model)
-    """
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            mode_weights (numpy array): Weights for each behaviour mode
+            rewards (list): List of mdp_extras.Linear reward functions, one for each mode
+            rollouts (list): List of (s, a) rollouts
+            
+        Returns:
+            (numpy array): |D|xK responsibility matrix based on the current reward
+                parameters and mode weights.
+        """
+        raise NotImplementedError
 
-    env = copy.deepcopy(env)
+    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+        """"""
+        raise NotImplementedError
 
-    assert (
-        state_reward_weights is not None
-        or state_action_reward_weights is not None
-        or state_action_state_reward_weights is not None
-    ), "Must provided at least one reward weight parameter"
+    def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
+        """"""
+        raise NotImplementedError
 
-    resp = np.ones((len(rollouts), num_modes))
 
-    if mode_weights is None:
-        mode_weights = np.ones(num_modes, dtype=float) / num_modes
+class MaxEntEMSolver(EMSolver):
+    """Solve an EM MM-IRL problem with MaxEnt IRL"""
 
-    for m in range(num_modes):
-        # Use Maximum Entropy distribution for computing path likelihoods
-        if state_reward_weights is not None:
-            env._state_rewards = state_reward_weights[m]
-        if state_action_reward_weights is not None:
-            env._state_action_rewards = state_action_reward_weights[m]
-        if state_action_state_reward_weights is not None:
-            env._state_action_state_rewards = state_action_state_reward_weights[m]
+    def estep(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Compute responsibility matrix using MaxEnt reward parameters
+        
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            mode_weights (numpy array): Weights for each behaviour mode
+            rewards (list): List of mdp_extras.Linear reward functions, one for each mode
+            rollouts (list): List of (s, a) rollouts
+            
+        Returns:
+            (numpy array): |D|xK responsibility matrix based on the current reward
+                parameters and mode weights.
+        """
 
-        # Pad the environment
-        env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
+        num_modes = len(mode_weights)
 
-        # Compute path likelihoods
-        resp[:, m] = mode_weights[m] * np.exp(
-            maxent_path_logprobs(
-                env_padded,
-                rollouts_padded,
-                theta_s=env_padded.state_rewards,
-                theta_sa=env_padded.state_action_rewards,
-                theta_sas=env_padded.state_action_state_rewards,
-                with_dummy_state=True,
+        resp = np.ones((len(rollouts), num_modes))
+        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
+            resp[:, mode_idx] = mode_weight * np.exp(
+                maxent_path_logprobs(xtr, phi, reward, rollouts)
             )
-        )
 
-    # Each path (row of the assignment matrix) gets a mass of 1 to allocate between
-    # modes
-    resp /= np.sum(resp, axis=1, keepdims=True)
+        # Each demonstration gets a mass of 1 to allocate between modes
+        resp /= np.sum(resp, axis=1, keepdims=True)
 
-    return resp
+        return resp
 
-
-def mixture_ll_maxent(
-    env,
-    rollouts,
-    mode_weights,
-    mode_state_reward_parameters=None,
-    mode_state_action_reward_parameters=None,
-    mode_state_action_state_reward_parameters=None,
-):
-    """Find the log-likelihood of a MaxEnt mixture model
-    
-    This is the average over all paths of the log-likelihood of each path. That is
-    
-    $$
-        \mathcal{L}(D \mid \Theta) =
-            \frac{1}{|D|}
-            \sum_{\tau \in \Data}
-            \log
-            \sum_{k=1}^K
-            \alpha_k
-            ~
-            p(\tau \mid \theta_k)
-    $$
-    
-    Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
-    for that mixture component
-    
-    Args:
-        env (explicit_env.IExplicitEnv): Environment defining dynamics
-        rollouts (list): List of state-action rollouts
-        mode_weights (list): List of prior probabilities for each mode
+    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+        """Compute reward parameters given responsibility matrix
         
-        mode_state_reward_parameters (list): List of |S| state reward parameter vectors
-        mode_state_reward_parameters (list): List of |S|x|A| state-action reward parameter vectors
-        mode_state_reward_parameters (list): List of |S|x|A|x|S| state-action-state reward parameter vectors
+        TODO ajs 2/dec/2020 Support re-using previous reward parameters as starting points
+        
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            rollouts (list): Demonstration data
     
-    Returns:
-        (float): Log Likelihood of the rollouts under the given mixture model
-    """
+        Returns:
+            (list): List of Linear reward functions
+        """
 
-    assert (
-        mode_state_reward_parameters is not None
-        or mode_state_action_reward_parameters is not None
-        or mode_state_action_state_reward_parameters is not None
-    ), "Must provide at least one reward parameter collection"
+        num_rollouts, num_modes = resp.shape
 
-    env = copy.deepcopy(env)
-    num_modes = len(mode_weights)
+        rewards = []
+        for mode_idx in range(num_modes):
 
-    # Convert missing reward parameter arguments to lists of 'None'
-    if mode_state_reward_parameters is None:
-        mode_state_reward_parameters = [None for _ in range(num_modes)]
-    if mode_state_action_reward_parameters is None:
-        mode_state_action_reward_parameters = [None for _ in range(num_modes)]
-    if mode_state_action_state_reward_parameters is None:
-        mode_state_action_state_reward_parameters = [None for _ in range(num_modes)]
+            rollout_weights = resp[:, mode_idx]
 
-    assert (
-        len(mode_state_reward_parameters)
-        == len(mode_state_action_reward_parameters)
-        == len(mode_state_action_state_reward_parameters)
-        == num_modes
-    ), "Provided number of reward parameters does not match number of modes in responsibility matrix"
+            theta0 = np.zeros(len(phi))
+            method = "BFGS"
+            reward_parameter_bounds = None
+            if reward_range is not None:
+                method = "L-BFGS-B"
+                reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
+            res = minimize(
+                sw_maxent_irl,
+                theta0,
+                args=(xtr, phi, rollouts, rollout_weights),
+                method=method,
+                jac=True,
+                bounds=reward_parameter_bounds,
+            )
+            rewards.append(Linear(res.x[:]))
 
-    # Pre-compute the partition values for each reward parameter
-    max_path_length = (
-        len(rollouts[0]) if len(rollouts) == 1 else max(*[len(r) for r in rollouts])
-    )
-    mode_log_partition_values = []
-    for mode in range(num_modes):
-        env._state_rewards = mode_state_reward_parameters[mode]
-        env._state_action_rewards = mode_state_action_reward_parameters[mode]
-        env._state_action_state_rewards = mode_state_action_state_reward_parameters[
-            mode
-        ]
-        env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
-        mode_log_partition_values.append(
-            maxent_log_partition(
-                env_padded,
+        return rewards
+
+    def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Find the average negative log-likelihood of a MaxEnt mixture model
+    
+        This is the average over all paths of the log-likelihood of each path. That is
+    
+        $$
+            \mathcal{L}(D \mid \Theta) =
+                -1 \times \frac{1}{|D|}
+                \sum_{\tau \in \Data}
+                \log
+                \sum_{k=1}^K
+                \alpha_k
+                ~
+                p(\tau \mid \theta_k)
+        $$
+    
+        Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
+        for that mixture component
+    
+        Args:
+            env (explicit_env.IExplicitEnv): Environment defining dynamics
+            rollouts (list): List of state-action rollouts
+            mode_weights (list): List of prior probabilities for each mode
+    
+        Returns:
+            (float): Log Likelihood of the rollouts under the given mixture model
+        """
+
+        max_path_length = max([len(r) for r in rollouts])
+
+        log_partition_values = []
+        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
+            alpha_log = nb_backward_pass_log(
+                xtr.p0s,
                 max_path_length,
-                env_padded.state_rewards,
-                env_padded.state_action_rewards,
-                env_padded.state_action_state_rewards,
-                True,
+                xtr.t_mat,
+                xtr.gamma,
+                *reward.structured(xtr, phi),
             )
-        )
+            log_partition_values.append(
+                log_partition(max_path_length, alpha_log, xtr.padded)
+            )
 
-    # Model Log Likelihood is a sum over rollouts
-    ll = 0
-    for ri, r in enumerate(rollouts):
+        rollout_lls = []
+        for rollout in rollouts:
 
-        # Path Likelihood is the log of a sum over modes
-        l_rollout_permode = []
-        for mode in range(num_modes):
+            # Get path probability under dynamics
+            q_tau = np.exp(xtr.path_log_probability(rollout))
 
-            env._state_rewards = mode_state_reward_parameters[mode]
-            env._state_action_rewards = mode_state_action_reward_parameters[mode]
-            env._state_action_state_rewards = mode_state_action_state_reward_parameters[
-                mode
-            ]
+            # Accumulate likelihood for this rollout across modes
+            rollout_likelihood = 0
+            for mode_idx, (mode_weight, reward, log_partition_value) in enumerate(
+                zip(mode_weights, rewards, log_partition_values)
+            ):
+                # Find MaxEnt likelihood of this rollout under this mode
+                path_prob_me = np.exp(trajectory_reward(xtr, phi, reward, rollout))
+                z_theta = np.exp(log_partition_value)
+                l_rollout_mode = mode_weight * q_tau * path_prob_me / z_theta
+                rollout_likelihood += l_rollout_mode
+            rollout_lls.append(np.log(rollout_likelihood))
 
-            q = np.exp(env.path_log_probability(r))
+        # Find average path negative log likelihood
+        nll = -1 * np.mean(rollout_lls)
 
-            mode_weight = mode_weights[mode]
-            path_prob_me = np.exp(r_tau(env, r))
-            z_theta = np.exp(mode_log_partition_values[mode])
-            l_rollout_mode = mode_weight * q * path_prob_me / z_theta
-            l_rollout_permode.append(l_rollout_mode)
-        l_rollout = np.sum(l_rollout_permode)
-        ll_rollout = np.log(l_rollout)
-        ll += ll_rollout / len(rollouts)
-
-    return ll
+        return nll
 
 
-def bv_em_maxent(
-    env,
+class MaxLikEMSolver(EMSolver):
+    """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
+
+    def __init__(self, boltzman_scale=0.5, qge_tol=1e-3):
+        """C-tor
+        
+        Args:
+            boltzman_scale (float): Boltzmann policy scale factor
+            qge_tol (float): Tolerance for Q-function gradient estimation
+        """
+        self._boltzman_scale = boltzman_scale
+        self._qge_tol = qge_tol
+
+    def estep(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Compute responsibility matrix using Max Likelihood reward parameters
+        
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            mode_weights (numpy array): Weights for each behaviour mode
+            rewards (list): List of mdp_extras.Linear reward functions, one for each mode
+            rollouts (list): List of (s, a) rollouts
+            
+        Returns:
+            (numpy array): |D|xK responsibility matrix based on the current reward
+                parameters and mode weights.
+        """
+
+        num_modes = len(mode_weights)
+
+        resp = np.ones((len(rollouts), num_modes))
+        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
+            q_star = q_vi(xtr, phi, reward)
+            pi = BoltzmannExplorationPolicy(q_star, scale=self._boltzman_scale)
+            for rollout_idx, rollout in enumerate(rollouts):
+                resp[rollout_idx, mode_idx] = mode_weight * np.exp(
+                    pi.path_log_likelihood(rollout)
+                )
+
+        # Each demonstration gets a mass of 1 to allocate between modes
+        resp /= np.sum(resp, axis=1, keepdims=True)
+
+        return resp
+
+    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+        """Compute reward parameters given responsibility matrix
+        
+        TODO ajs 2/dec/2020 Support re-using previous reward parameters as starting points
+        
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            rollouts (list): Demonstration data
+    
+        Returns:
+            (list): List of Linear reward functions
+        """
+
+        num_rollouts, num_modes = resp.shape
+
+        rewards = []
+        for mode_idx in range(num_modes):
+
+            rollout_weights = resp[:, mode_idx]
+
+            theta0 = np.zeros(len(phi))
+            method = "BFGS"
+            reward_parameter_bounds = None
+            if reward_range is not None:
+                method = "L-BFGS-B"
+                reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
+            res = minimize(
+                bv_maxlikelihood_irl,
+                theta0,
+                args=(
+                    xtr,
+                    phi,
+                    rollouts,
+                    rollout_weights,
+                    self._boltzman_scale,
+                    self._qge_tol,
+                ),
+                method=method,
+                jac=True,
+                bounds=reward_parameter_bounds,
+            )
+            rewards.append(Linear(res.x[:]))
+
+        return rewards
+
+    def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Find the average negative log-likelihood of a MaxEnt mixture model
+    
+        This is the average over all paths of the log-likelihood of each path. That is
+    
+        $$
+            \mathcal{L}(D \mid \Theta) =
+                -1 \times \frac{1}{|D|}
+                \sum_{\tau \in \Data}
+                \log
+                \sum_{k=1}^K
+                \alpha_k
+                ~
+                p(\tau \mid \theta_k)
+        $$
+    
+        Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
+        for that mixture component
+    
+        Args:
+            env (explicit_env.IExplicitEnv): Environment defining dynamics
+            rollouts (list): List of state-action rollouts
+            mode_weights (list): List of prior probabilities for each mode
+    
+        Returns:
+            (float): Log Likelihood of the rollouts under the given mixture model
+        """
+
+        max_path_length = max([len(r) for r in rollouts])
+
+        log_partition_values = []
+        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
+            alpha_log = nb_backward_pass_log(
+                xtr.p0s,
+                max_path_length,
+                xtr.t_mat,
+                xtr.gamma,
+                *reward.structured(xtr, phi),
+            )
+            log_partition_values.append(
+                log_partition(max_path_length, alpha_log, xtr.padded)
+            )
+
+        rollout_lls = []
+        for rollout in rollouts:
+
+            # Get path probability under dynamics
+            q_tau = np.exp(xtr.path_log_probability(rollout))
+
+            # Accumulate likelihood for this rollout across modes
+            rollout_likelihood = 0
+            for mode_idx, (mode_weight, reward, log_partition_value) in enumerate(
+                zip(mode_weights, rewards, log_partition_values)
+            ):
+                # Find MaxEnt likelihood of this rollout under this mode
+                path_prob_me = np.exp(trajectory_reward(xtr, phi, reward, rollout))
+                z_theta = np.exp(log_partition_value)
+                l_rollout_mode = mode_weight * q_tau * path_prob_me / z_theta
+                rollout_likelihood += l_rollout_mode
+            rollout_lls.append(np.log(rollout_likelihood))
+
+        # Find average path negative log likelihood
+        nll = -1 * np.mean(rollout_lls)
+
+        return nll
+
+
+def bv_em(
+    solver,
+    xtr,
+    phi,
     rollouts,
     num_modes,
-    rs=False,
-    rsa=False,
-    rsas=False,
-    initial_mode_weights=None,
-    initial_state_reward_weights=None,
-    initial_state_action_reward_weights=None,
-    initial_state_action_state_reward_weights=None,
-    max_iterations=100,
-    min_weight_change=1e-6,
-    verbose=False,
+    reward_range,
+    mode_weights=None,
+    rewards=None,
+    tolerance=1e-5,
 ):
-    """Solve a multi-modal IRL problem using the Babes-Vroman EM alg with MaxEnt IRL
+    """
     
     Args:
-        env (explicit_env.envs.IExplicitEnv): Environment defining the dynamics of the
-            multi-modal IRL problem and the .reward_range parameter
-        rollouts (list): List of demonstration trajectories, each a list of (s ,a)
-            tuples
-        num_modes (int): Number of modes to solve for - this is a hyper parameter of
-            the algorithm
+        xtr:
+        phi:
+        rollouts:
+        solver:
+        num_modes:
+        reward_range:
         
-        rs (bool): Solve for state rewards?
-        rsa (bool): Solve for state-action rewards?
-        rsas (bool): Solve for state-action-state rewards?
-        initial_mode_weights (numpy array): Optional list of initial mode weights -
-            if not provided, defaults to uniform.
-        initial_state_reward_weights (list): List of initial mode state reward weights (numpy
-            arrays) - one for each mode. If not provided, these weights are sampled from
-            a uniform distribution over possible reward values.
-        initial_state_action_reward_weights (list): List of initial mode state-action reward weights (numpy
-            arrays) - one for each mode. If not provided, these weights are sampled from
-            a uniform distribution over possible reward values.
-        initial_state_action_state_reward_weights (list): List of initial mode state-action-state reward weights (numpy
-            arrays) - one for each mode. If not provided, these weights are sampled from
-            a uniform distribution over possible reward values.
-        max_iterations (int): Maximum number of EM iterations to perform
-        min_weight_change (float): Stop EM iterations when the change in mode weights
-            fall below this value
-        verbose (bool): Print progress information
-    
+        mode_weights:
+        rewards:
+        tolerance:
+
     Returns:
-        (int): Number of iterations performed until convergence
-        (numpy array): N x K numpy array representing path assignments to modes. One row
-            for each path in the demonstration data, one column for each mode
-        (numpy array): K x |S| array of recovered state reward weights for each mode
-        (numpy array): K x |S|x|A| array of recovered state-action reward weights for each mode
-        (numpy array): K x |S|x|A|x|S| array of recovered state-aciton-state reward weights for each mode
+
     """
 
-    assert rs or rsa or rsas, "Must specify one of rs, rsa, or rsas!"
+    # Initialize reward parameters and mode weights randomly if not passed
+    if mode_weights is None:
+        rv = dirichlet([1.0 / num_modes for _ in range(num_modes)])
+        mode_weights = rv.rvs(1)[0]
 
-    # Work with a copy of the env
-    env = copy.deepcopy(env)
+    if rewards is None:
+        rewards = [
+            Linear(np.random.uniform(*reward_range, len(phi))) for _ in range(num_modes)
+        ]
 
-    env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
+    assert len(mode_weights) == num_modes
+    assert len(rewards) == num_modes
 
-    # How many paths have we got?
-    num_paths = len(rollouts)
+    resp_history = []
+    mode_weights_history = []
+    rewards_history = []
+    nll_history = []
+    for iteration in it.count():
 
-    # Initialize mode weights
-    if initial_mode_weights is None:
-        mode_weights = np.ones(num_modes, dtype=float) / num_modes
-    else:
-        assert (
-            len(initial_mode_weights) == num_modes
-        ), "Wrong number of initial mode weights passed"
-        mode_weights = initial_mode_weights
+        # E-step
+        resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
+        mode_weights = np.sum(resp, axis=0) / len(rollouts)
 
-    if rs:
-        # Initialize state rewards
-        if initial_state_reward_weights is None:
-            # Use uniform initial weights over range of valid reward values
-            state_reward_weights = [
-                np.random.uniform(
-                    low=env.reward_range[0],
-                    high=env.reward_range[1],
-                    size=len(env.states),
-                )
-                for _ in range(num_modes)
-            ]
-        else:
-            assert (
-                len(initial_state_reward_weights) == num_modes
-            ), "Wrong number of initial reward weights passed"
-            state_reward_weights = initial_state_reward_weights
-            state_reward_weights_clipped = np.clip(
-                state_reward_weights, *env.reward_range
-            )
-            if not np.all(state_reward_weights_clipped == state_reward_weights):
-                warnings.warn(
-                    "Initial reward weights are outside valid reward ranges - clipping"
-                )
-            state_reward_weights = state_reward_weights_clipped
-    else:
-        state_reward_weights = None
-    if rsa:
-        # Initialize state-action rewards
-        if initial_state_action_reward_weights is None:
-            # Use uniform initial weights over range of valid reward values
-            state_action_reward_weights = [
-                np.random.uniform(
-                    low=env.reward_range[0],
-                    high=env.reward_range[1],
-                    size=(len(env.states), len(env.actions)),
-                )
-                for _ in range(num_modes)
-            ]
-        else:
-            assert (
-                len(initial_state_action_reward_weights) == num_modes
-            ), "Wrong number of initial reward weights passed"
-            state_action_reward_weights = initial_state_action_reward_weights
-            state_action_reward_weights_clipped = np.clip(
-                state_action_reward_weights, *env.reward_range
-            )
-            if not np.all(
-                state_action_reward_weights_clipped == state_action_reward_weights
-            ):
-                warnings.warn(
-                    "Initial reward weights are outside valid reward ranges - clipping"
-                )
-            state_action_reward_weights = state_action_reward_weights_clipped
-    else:
-        state_action_reward_weights = None
-    if rsas:
-        # Initialize state-action-state rewards
-        if initial_state_action_state_reward_weights is None:
-            # Use uniform initial weights over range of valid reward values
-            state_action_state_reward_weights = [
-                np.random.uniform(
-                    low=env.reward_range[0],
-                    high=env.reward_range[1],
-                    size=(len(env.states), len(env.actions), len(env.states)),
-                )
-                for _ in range(num_modes)
-            ]
-        else:
-            assert (
-                len(initial_state_action_state_reward_weights) == num_modes
-            ), "Wrong number of initial reward weights passed"
-            state_action_state_reward_weights = (
-                initial_state_action_state_reward_weights
-            )
-            state_action_state_reward_weights_clipped = np.clip(
-                state_action_state_reward_weights, *env.reward_range
-            )
-            if not np.all(
-                state_action_state_reward_weights_clipped
-                == state_action_state_reward_weights
-            ):
-                warnings.warn(
-                    "Initial reward weights are outside valid reward ranges - clipping"
-                )
-            state_action_state_reward_weights = (
-                state_action_state_reward_weights_clipped
-            )
-    else:
-        state_action_state_reward_weights = None
+        # M-step
+        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
 
-    for _it in it.count():
-        if verbose:
-            print("EM Iteration {}".format(_it + 1), end="", flush=True)
-            print(", Weights:{}".format(mode_weights), end="", flush=True)
+        # Compute LL
+        nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
 
-        # E-step: Solve for responsibility matrix
-        zij = responsibilty_matrix_maxent(
-            env,
-            rollouts,
-            num_modes,
-            state_reward_weights,
-            state_action_reward_weights,
-            state_action_state_reward_weights,
-            mode_weights,
-        )
+        resp_history.append(resp)
+        mode_weights_history.append(mode_weights)
+        rewards_history.append(rewards)
+        nll_history.append(nll)
 
-        # M-step: Update mode weights and reward estimates
-        old_mode_weights = copy.copy(mode_weights)
-        mode_weights = np.sum(zij, axis=0) / num_paths
+        if len(nll_history) > 1:
+            if nll_history[-1] > nll_history[-2]:
+                # We've over-stepped a solution point - go back
+                resp_history = resp_history[:-1]
+                mode_weights_history = mode_weights_history[:-1]
+                rewards_history = rewards_history[:-1]
+                nll_history = nll_history[:-1]
+                break
 
-        for m in range(num_modes):
-            # Use MaxEnt IRL for computing reward functions
-            theta_s, theta_sa, theta_sas = sw_maxent_irl(
-                rollouts_padded,
-                env_padded,
-                rs=rs,
-                rsa=rsa,
-                rsas=rsas,
-                rbound=env.reward_range,
-                with_dummy_state=True,
-                grad_twopoint=True,
-                path_weights=zij[:, m],
-            )
-            if rs:
-                state_reward_weights[m] = theta_s[:-1]
-            if rsa:
-                state_action_reward_weights[m] = theta_sa[:-1, :-1]
-            if rsas:
-                state_action_state_reward_weights[m] = theta_sas[:-1, :-1, :-1]
+            nll_delta = np.abs(nll_history[-2] - nll_history[-1])
+            if nll_delta <= tolerance:
+                # NLL has converged
+                break
 
-        delta = np.max(np.abs(old_mode_weights - mode_weights))
-        if verbose:
-            print(", Δ:{}".format(delta), flush=True)
+    return resp_history, mode_weights_history, rewards_history, nll_history
 
-        if delta <= min_weight_change:
-            if verbose:
-                print("EM mode wights have converged, stopping", flush=True)
-            break
-
-        if _it == max_iterations - 1:
-            if verbose:
-                print("Reached maximum number of EM iterations, stopping", flush=True)
-            break
-
-    if rs:
-        state_reward_weights = np.array(state_reward_weights)
-    if rsa:
-        state_action_reward_weights = np.array(state_action_reward_weights)
-    if rsas:
-        state_action_state_reward_weights = np.array(state_action_state_reward_weights)
-
-    return (
-        (_it + 1),
-        zij,
-        state_reward_weights,
-        state_action_reward_weights,
-        state_action_state_reward_weights,
-    )
-
-
-def init_from_feature_clusters(env, rollouts, num_modes, init="uniform", verbose=False):
-    """Compute a MM-IRL initialization by clustering in feature space
-    
-    For now, only supports state-based reward features
-    
-    Args:
-        env (explicit_env.IExplicitEnv): Environment defining dynamics
-        rollouts (list): List of state-action demonstration rollouts
-        num_modes (int): Number of modes to cluster into
-        init (str): Clustering method, one of 'uniform', 'gmm', 'kmeans'
-        verbose (bool): Print progress information
-    
-    Returns:
-        (numpy array): NxK initial responsibility matrix
-        (numpy array): K Vector of initial mode weights
-        (numpy array): K list of |S| arrays of initial state reward weights
-        (numpy array): K list of |S|x|A| arrays of initial state-action reward weights
-        (numpy array): K list of |S|x|A|x|S| arrays of initial state-action-state reward weights
-    """
-
-    # How many times to restart the initialization method?
-    NUM_INIT_RESTARTS = 5000
-
-    # Build feature matrix
-    rollout_features = np.array(
-        [empirical_feature_expectations(env, [r])[0] for r in rollouts]
-    )
-
-    if init == "uniform":
-
-        # Use uniform initial clustering
-        soft_initial_clusters = np.ones((len(rollouts), num_modes))
-        soft_initial_clusters /= num_modes
-
-        # Don't learn any initial rewards
-        initial_state_reward_weights = None
-        initial_state_action_reward_weights = None
-        initial_state_action_state_reward_weights = None
-
-    elif init == "kmeans":
-
-        # Initialize mode weights with K-Means (hard) clustering
-        km = KMeans(n_clusters=num_modes, n_init=NUM_INIT_RESTARTS)
-        hard_initial_clusters = km.fit_predict(rollout_features)
-        soft_initial_clusters = np.zeros((len(rollouts), num_modes))
-        for idx, clstr in enumerate(hard_initial_clusters):
-            soft_initial_clusters[idx, clstr] = 1.0
-
-    elif init == "gmm":
-
-        # Initialize mode weights with GMM (soft) clustering
-        gmm = GaussianMixture(n_components=num_modes, n_init=NUM_INIT_RESTARTS,)
-        gmm.fit(rollout_features)
-        soft_initial_clusters = gmm.predict_proba(rollout_features)
-
-    else:
-        raise ValueError(f"Unknown argument for init: {init}")
-
-    if verbose:
-        print("Initial clusters:", flush=True)
-        print(soft_initial_clusters, flush=True)
-
-    if init != "uniform":
-        # Compute initial reward weights from up-front clustering
-        env_padded, rollouts_padded = pad_terminal_mdp(env, rollouts=rollouts)
-        initial_state_reward_weights = []
-        initial_state_action_reward_weights = []
-        initial_state_action_state_reward_weights = []
-        for m in range(num_modes):
-            r_s, r_sa, r_sas = sw_maxent_irl(
-                rollouts_padded,
-                env_padded,
-                rs=env.state_rewards is not None,
-                rsa=env.state_action_rewards is not None,
-                rsas=env.state_action_state_rewards is not None,
-                rbound=env.reward_range,
-                with_dummy_state=True,
-                grad_twopoint=True,
-                path_weights=soft_initial_clusters[:, m],
-            )
-
-            # Drop dummy states
-            if env.state_rewards is not None:
-                r_s = r_s[:-1]
-            if env.state_action_rewards is not None:
-                r_sa = r_sa[:-1, :-1]
-            if env.state_action_state_rewards is not None:
-                r_sas = r_sas[:-1, :-1, :-1]
-
-            initial_state_reward_weights.append(r_s)
-            initial_state_action_reward_weights.append(r_sa)
-            initial_state_action_state_reward_weights.append(r_sas)
-
-    # Compute initial mode weights from soft clustering
-    initial_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
-
-    return (
-        soft_initial_clusters,
-        initial_mode_weights,
-        initial_state_reward_weights,
-        initial_state_action_reward_weights,
-        initial_state_action_state_reward_weights,
     )
