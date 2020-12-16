@@ -55,4 +55,4 @@ def median_ci(values, confidence_level=0.95):
     high_ci_rank = round(1 + num_repeats / 2 + z_factor * np.sqrt(num_repeats) / 2)
     values_sorted = sorted(values)
 
-    return values_sorted[low_ci_rank], median, values[high_ci_rank]
+    return values_sorted[low_ci_rank], median, values_sorted[high_ci_rank]
