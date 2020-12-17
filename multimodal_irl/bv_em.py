@@ -64,6 +64,102 @@ class EMSolver(abc.ABC):
         """"""
         raise NotImplementedError
 
+    def init_random(self, phi, num_clusters, reward_range):
+        """Initialize mixture model uniform randomly
+        
+        Args:
+            phi (mdp_extras.FeatureFunction): Feature function
+            num_clusters (int): Number of mixture components
+            reward_range (tuple): Lower and upper reward function parameter bounds
+        
+        Returns:
+            (numpy array): Initial mixture component weights
+            (list): List of mdp_extras.Linear initial reward functions
+        """
+
+        mode_weights = dirichlet([1.0 / num_clusters for _ in range(num_clusters)]).rvs(
+            1
+        )[0]
+
+        rewards = [
+            Linear(np.random.uniform(*reward_range, len(phi)))
+            for _ in range(num_clusters)
+        ]
+
+        return mode_weights, rewards
+
+    def init_kmeans(
+        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
+    ):
+        """Initialize mixture model with KMeans (hard clustering)
+        
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            rollouts (list): List of (s, a) rollouts
+            num_clusters (int): Number of mixture components
+            reward_range (tuple): Lower and upper reward function parameter bounds
+            
+            num_restarts (int): Number of random clusterings to perform
+        
+        Returns:
+            (numpy array): Initial mixture component weights
+            (list): List of mdp_extras.Linear initial reward functions
+        """
+
+        feature_mat = np.array([phi.expectation([r], xtr.gamma) for r in rollouts])
+
+        km = KMeans(n_clusters=num_clusters, n_init=num_restarts)
+        hard_initial_clusters = km.fit_predict(feature_mat)
+        soft_initial_clusters = np.zeros((len(rollouts), num_clusters))
+        for idx, clstr in enumerate(hard_initial_clusters):
+            soft_initial_clusters[idx, clstr] = 1.0
+
+        # Compute initial mode weights from soft clustering
+        mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
+
+        # Compute initial rewards
+        rewards = self.mstep(
+            xtr, phi, soft_initial_clusters, rollouts, reward_range=reward_range
+        )
+
+        return mode_weights, rewards
+
+    def init_gmm(
+        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
+    ):
+        """Initialize mixture model with GMM (soft clustering)
+        
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            rollouts (list): List of (s, a) rollouts
+            num_clusters (int): Number of mixture components
+            reward_range (tuple): Lower and upper reward function parameter bounds
+            
+            num_restarts (int): Number of random clusterings to perform
+        
+        Returns:
+            (numpy array): Initial mixture component weights
+            (list): List of mdp_extras.Linear initial reward functions
+        """
+
+        feature_mat = np.array([phi.expectation([r], xtr.gamma) for r in rollouts])
+
+        gmm = GaussianMixture(n_components=num_clusters, n_init=num_restarts)
+        gmm.fit(feature_mat)
+        soft_initial_clusters = gmm.predict_proba(feature_mat)
+
+        # Compute initial mode weights from soft clustering
+        mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
+
+        # Compute initial rewards
+        rewards = self.mstep(
+            xtr, phi, soft_initial_clusters, rollouts, reward_range=reward_range
+        )
+
+        return mode_weights, rewards
+
 
 class MaxEntEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxEnt IRL"""
@@ -405,13 +501,10 @@ def bv_em(
 
     # Initialize reward parameters and mode weights randomly if not passed
     if mode_weights is None:
-        rv = dirichlet([1.0 / num_modes for _ in range(num_modes)])
-        mode_weights = rv.rvs(1)[0]
+        mode_weights, _ = solver.init_random(phi, num_modes, reward_range)
 
     if rewards is None:
-        rewards = [
-            Linear(np.random.uniform(*reward_range, len(phi))) for _ in range(num_modes)
-        ]
+        _, rewards = solver.init_random(phi, num_modes, reward_range)
 
     assert len(mode_weights) == num_modes
     assert len(rewards) == num_modes
