@@ -27,6 +27,7 @@ class EMSolver(abc.ABC):
     """An abstract base class for a Multi-Modal IRL EM solver"""
 
     def __init__(self):
+        """C-tor"""
         pass
 
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
@@ -46,7 +47,17 @@ class EMSolver(abc.ABC):
         raise NotImplementedError
 
     def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
-        """"""
+        """Compute reward parameters given responsibility matrix
+        
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            rollouts (list): Demonstration data
+    
+        Returns:
+            (list): List of Linear reward functions
+        """
         raise NotImplementedError
 
     def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
