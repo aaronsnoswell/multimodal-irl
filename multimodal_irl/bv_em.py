@@ -360,22 +360,35 @@ def bv_em(
     mode_weights=None,
     rewards=None,
     tolerance=1e-5,
+    max_iterations=None,
 ):
     """
+    Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
+    
+    See the paper "Apprenticeship learning about multiple intentions." in ICML 2011.
     
     Args:
-        xtr:
-        phi:
-        rollouts:
-        solver:
-        num_modes:
-        reward_range:
+        xtr (mpd_extras.DiscreteExplicitExtras): MDP extras
+        phi (mdp_extras.FeatureFunction): Feature function
+        rollouts (list): List of (s, a) rollouts
+        solver (EMSolver): IRL solver to use for EM algorithm
+        num_modes (int): Number of behaviour modes to learn
+        reward_range (tuple): Low, High bounds for reward function parameters
         
-        mode_weights:
-        rewards:
-        tolerance:
+        mode_weights (numpy array): Initial mode weights. If provided, len() must match
+            num_modes. If None, weights are uniformly sampled from the (num_modes - 1)
+            probability simplex.
+        rewards (list): List of initial rewards (mdp_extras.Linear) - if None, reward
+            parameters are uniform randomly initialized within reward_range
+        tolerance (float): NLL convergence threshold
+        max_iterations (int): Maximum number of iterations (alternate stopping criterion)
 
     Returns:
+        (list): List of responsibility matrix (numpy array) at every iteration
+        (list): List of cluster weights (numpy array) at every iteration
+        (list): List of rewards (mdp_extras.Linear) at every iteration
+        (float): The NLL of the starting configuration
+        (list): List of NLL (float) at every algorithm iteration
 
     """
 
@@ -398,19 +411,8 @@ def bv_em(
     nll_history = []
     for iteration in it.count():
 
-        # E-step
-        resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
-        mode_weights = np.sum(resp, axis=0) / len(rollouts)
-
-        # M-step
-        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
-
         # Compute LL
         nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
-
-        resp_history.append(resp)
-        mode_weights_history.append(mode_weights)
-        rewards_history.append(rewards)
         nll_history.append(nll)
 
         if len(nll_history) > 1:
@@ -427,6 +429,27 @@ def bv_em(
                 # NLL has converged
                 break
 
-    return resp_history, mode_weights_history, rewards_history, nll_history
+        # E-step
+        resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
+        mode_weights = np.sum(resp, axis=0) / len(rollouts)
+
+        # M-step
+        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
+
+        resp_history.append(resp)
+        mode_weights_history.append(mode_weights)
+        rewards_history.append(rewards)
+
+        # Check for max iterations stopping condition
+        if max_iterations is not None and iteration >= max_iterations:
+            break
+
+    return (
+        resp_history,
+        mode_weights_history,
+        rewards_history,
+        nll_history[0],
+        nll_history[1:],
+    )
 
     )
