@@ -548,11 +548,11 @@ def bv_em(
                 # NLL has converged
                 break
 
-        # E-step
+        # E-step - update responsibility matrix, mixture component weights
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
         mode_weights = np.sum(resp, axis=0) / len(rollouts)
 
-        # M-step
+        # M-step - solve for new reward parameters
         rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
 
         resp_history.append(resp)
