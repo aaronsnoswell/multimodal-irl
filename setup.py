@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="multimodal_irl",
-    version="0.0.1",
+    version="0.0.2",
     install_requires=[
         "gym >= 0.2.3",
         "numpy",
@@ -14,11 +14,9 @@ setup(
         "pandas >= 1.0.1",
         "matplotlib",
         "seaborn",
-        "python-interface",
-        "pytest",
-        "explicit_env @ git+https://github.com/aaronsnoswell/explicit-env.git",
+        "sacred >= 0.8.2",
+        "mdp_extras @ git+https://github.com/aaronsnoswell/mdp-extras.git",
         "unimodal_irl @ git+https://github.com/aaronsnoswell/unimodal-irl.git",
-        "puddle_world @ git+https://github.com/aaronsnoswell/puddle-world.git",
     ],
     packages=find_packages(),
 )
