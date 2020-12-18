@@ -6,7 +6,6 @@ import ast
 import tqdm
 import pymongo
 import argparse
-import warnings
 
 import numpy as np
 import pandas as pd
@@ -17,10 +16,6 @@ from sacred.observers import MongoObserver
 from pprint import pprint
 from datetime import datetime
 from concurrent import futures
-from scipy.stats import dirichlet
-
-from sklearn.cluster import KMeans
-from sklearn.mixture import GaussianMixture
 
 from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em
 
@@ -39,7 +34,6 @@ from multimodal_irl.metrics import (
     normalized_information_distance,
     adjusted_normalized_information_distance,
     min_cost_flow_error_metric,
-    mean_error_metric,
 )
 from unimodal_irl.metrics import ile_evd
 
@@ -330,12 +324,12 @@ def canonical_puddle_world(
     }
 
 
-def run(config):
+def run(config, mongodb_url="localhost:27017"):
     """Run a single experiment with the given configuration"""
 
     # Attach MongoDB observer if necessary
     if not ex.observers:
-        ex.observers.append(MongoObserver())
+        ex.observers.append(MongoObserver(url=mongodb_url))
 
     # Run the experiment
     run = ex.run(config_updates=config, options={"--loglevel": "ERROR"})
@@ -469,7 +463,7 @@ def main():
     _base_config = {
         "gt_num_clusters": args.gt_num_modes,
         "num_clusters": args.num_modes,
-        "rollouts_per_mode": args.rollouts_per_mode,
+        "tr_rollouts_per_mode": args.rollouts_per_mode,
         "initialisation": args.init,
         "transition_type": "Stochastic" if args.stochastic else "Deterministic",
     }
@@ -486,14 +480,26 @@ def main():
         _config.update({"replicate": replicate})
         configs.append(_config)
 
+    # Read MongoDB URL from config file, if it exists
+    mongodb_config_file = "mongodb-config.txt"
+    mongodb_url = "localhost:27017"
+    if os.path.exists(mongodb_config_file):
+        with open(mongodb_config_file, "r") as file:
+            mongodb_url = file.readline()
+
+    # Parallel loop
     with tqdm.tqdm(total=len(configs)) as pbar:
         with futures.ProcessPoolExecutor(max_workers=num_cpus) as executor:
-            tasks = {executor.submit(run, config) for config in configs}
+            tasks = {executor.submit(run, config, mongodb_url) for config in configs}
             for future in futures.as_completed(tasks):
                 # Use arg or result here if desired
                 # arg = tasks[future]
                 # result = future.result()
                 pbar.update(1)
+
+    # # Non-parallel loop for debugging
+    # for config in tqdm.tqdm(configs):
+    #     run(config)
 
     print("META: Finished replicate sweep")
 
