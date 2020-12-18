@@ -16,6 +16,7 @@ setup(
         "seaborn",
         "tqdm",
         "sacred",
+        "pymongo",
         "mdp_extras @ git+https://github.com/aaronsnoswell/mdp-extras.git",
         "unimodal_irl @ git+https://github.com/aaronsnoswell/unimodal-irl.git",
     ],
