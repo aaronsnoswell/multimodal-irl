@@ -488,8 +488,10 @@ def main():
     mongodb_config_file = "mongodb-config.txt"
     mongodb_url = "localhost:27017"
     if os.path.exists(mongodb_config_file):
+        print(f"META: Reading MongoDB config from {mongodb_config_file}")
         with open(mongodb_config_file, "r") as file:
             mongodb_url = file.readline()
+    print(f"META: MongoDB Server URL: {mongodb_url}")
 
     # Parallel loop
     with tqdm.tqdm(total=len(configs)) as pbar:
