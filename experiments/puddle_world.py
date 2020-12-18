@@ -6,6 +6,7 @@ import ast
 import tqdm
 import pymongo
 import argparse
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -23,12 +24,7 @@ from multimodal_irl.envs import (
     CanonicalPuddleWorldEnv,
     puddle_world_extras,
 )
-from mdp_extras import (
-    OptimalPolicy,
-    padding_trick_mm,
-    Linear,
-    q_vi,
-)
+from mdp_extras import OptimalPolicy, padding_trick_mm, q_vi, PaddedMDPWarning
 
 from multimodal_irl.metrics import (
     normalized_information_distance,
@@ -331,8 +327,12 @@ def run(config, mongodb_url="localhost:27017"):
     if not ex.observers:
         ex.observers.append(MongoObserver(url=mongodb_url))
 
-    # Run the experiment
-    run = ex.run(config_updates=config, options={"--loglevel": "ERROR"})
+    # Supress warnings about padded MPDs
+    with warnings.catch_warnings():
+        warnings.filterwarnings(action="ignore", category=PaddedMDPWarning)
+
+        # Run the experiment
+        run = ex.run(config_updates=config, options={"--loglevel": "ERROR"})
 
     # Return the result
     return run.result
