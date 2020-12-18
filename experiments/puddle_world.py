@@ -68,8 +68,11 @@ def base_config():
     # Number of restarts to use for non-random initializations
     num_init_restarts = 5000
 
-    # Number of rollouts to sample per ground truth behaviour mode
-    rollouts_per_mode = 5
+    # Number of rollouts to sample per ground truth behaviour mode (training set)
+    tr_rollouts_per_mode = 5
+
+    # Number of rollouts to sample per ground truth behaviour mode (test set)
+    te_rollouts_per_mode = 100
 
     # Minimum and maximum reward parameter values
     reward_range = (-10, 0)
@@ -77,8 +80,8 @@ def base_config():
     # Tolerance for Negative Log Likelihood convergence
     tolerance = 1e-5
 
-    # Number of learned (training) clusters
-    tr_num_clusters = 2
+    # Number of learned clusters
+    num_clusters = 2
 
     # Replicate ID for this experiment
     replicate = 0
@@ -90,11 +93,12 @@ def canonical_puddle_world(
     transition_type,
     environment,
     gt_num_clusters,
-    rollouts_per_mode,
+    tr_rollouts_per_mode,
+    te_rollouts_per_mode,
     algorithm,
     initialisation,
     num_init_restarts,
-    tr_num_clusters,
+    num_clusters,
     reward_range,
     tolerance,
     _log,
@@ -117,32 +121,43 @@ def canonical_puddle_world(
 
     xtr, phi, gt_rewards = puddle_world_extras(env)
 
-    if gt_num_clusters == 2:
+    if gt_num_clusters == 3:
+        pass
+    elif gt_num_clusters == 2:
         # Drop 'any' mode
         gt_rewards = list(gt_rewards.values())[:gt_num_clusters]
-    elif gt_num_clusters == 3:
-        pass
     else:
         raise ValueError
 
     # Get rollouts
     q_stars = []
     pi_stars = []
-    rollouts_structured = []
-    rollouts = []
+    tr_rollouts_structured = []
+    tr_rollouts = []
+    te_rollouts_structured = []
+    te_rollouts = []
     for reward in gt_rewards:
+        # Get Q* function
         q_star = q_vi(xtr, phi, reward=reward)
-        pi_star = OptimalPolicy(q_star)
-        _rollouts = pi_star.get_rollouts(env, rollouts_per_mode)
-
         q_stars.append(q_star)
+
+        # Get optimal stochastic policy
+        pi_star = OptimalPolicy(q_star)
         pi_stars.append(pi_star)
-        rollouts_structured.append(_rollouts)
-        rollouts.extend(_rollouts)
+
+        # Sample training rollouts from optimal policy
+        _tr_rollouts = pi_star.get_rollouts(env, tr_rollouts_per_mode)
+        tr_rollouts_structured.append(_tr_rollouts)
+        tr_rollouts.extend(_tr_rollouts)
+
+        # Sample distinct testing rollouts from optimal policy
+        _te_rollouts = pi_star.get_rollouts(env, te_rollouts_per_mode)
+        te_rollouts_structured.append(_te_rollouts)
+        te_rollouts.extend(_te_rollouts)
 
     # Apply padding trick
-    xtr_p, phi_p, gt_rewards_p, rollouts_p = padding_trick_mm(
-        xtr, phi, gt_rewards, rollouts
+    xtr_p, phi_p, gt_rewards_p, tr_rollouts_p = padding_trick_mm(
+        xtr, phi, gt_rewards, tr_rollouts
     )
 
     # Get solver object
@@ -156,68 +171,36 @@ def canonical_puddle_world(
     _log.info("Solving...")
     t0 = datetime.now()
 
-    # Initialize reward parameters and mode weights randomly
     if initialisation == "Random":
-
         # Initialize uniformly at random
-        st_mode_weights = dirichlet(
-            [1.0 / tr_num_clusters for _ in range(tr_num_clusters)]
-        ).rvs(1)[0]
-        st_rewards = [
-            Linear(np.random.uniform(*reward_range, len(phi_p)))
-            for _ in range(tr_num_clusters)
-        ]
-
+        st_mode_weights, st_rewards = solver.init_random(
+            phi_p, num_clusters, reward_range
+        )
     elif initialisation == "KMeans":
-
         # Initialize with K-Means (hard) clustering
-        feature_mat = np.array(
-            [phi_p.expectation([r], xtr_p.gamma) for r in rollouts_p]
+        st_mode_weights, st_rewards = solver.init_kmeans(
+            xtr_p, phi_p, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
         )
-
-        km = KMeans(n_clusters=tr_num_clusters, n_init=num_init_restarts)
-        hard_initial_clusters = km.fit_predict(feature_mat)
-        soft_initial_clusters = np.zeros((len(rollouts), tr_num_clusters))
-        for idx, clstr in enumerate(hard_initial_clusters):
-            soft_initial_clusters[idx, clstr] = 1.0
-
-        # Compute initial mode weights from soft clustering
-        st_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
-
-        # Compute initial rewards
-        st_rewards = solver.mstep(
-            xtr_p, phi_p, soft_initial_clusters, rollouts_p, reward_range=reward_range
-        )
-
     elif initialisation == "GMM":
-
         # Initialize with GMM (soft) clustering
-        feature_mat = np.array(
-            [phi_p.expectation([r], xtr_p.gamma) for r in rollouts_p]
+        st_mode_weights, st_rewards = solver.init_gmm(
+            xtr_p, phi_p, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
         )
-
-        gmm = GaussianMixture(n_components=tr_num_clusters, n_init=num_init_restarts)
-        gmm.fit(feature_mat)
-        soft_initial_clusters = gmm.predict_proba(feature_mat)
-
-        # Compute initial mode weights from soft clustering
-        st_mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
-
-        # Compute initial rewards
-        st_rewards = solver.mstep(
-            xtr_p, phi_p, soft_initial_clusters, rollouts_p, reward_range=reward_range
-        )
-
     else:
         raise ValueError
-    st_nll = solver.mixture_nll(xtr_p, phi_p, st_mode_weights, st_rewards, rollouts_p)
 
-    resp_history, mode_weights_history, rewards_history, nll_history = bv_em(
+    (
+        tr_resp_history,
+        mode_weights_history,
+        rewards_history,
+        st_nll,
+        tr_nll_history,
+    ) = bv_em(
         solver,
         xtr_p,
         phi_p,
-        rollouts_p,
-        tr_num_clusters,
+        tr_rollouts_p,
+        num_clusters,
         reward_range,
         mode_weights=st_mode_weights,
         rewards=st_rewards,
@@ -226,81 +209,124 @@ def canonical_puddle_world(
 
     t1 = datetime.now()
 
-    iterations = len(resp_history)
+    iterations = len(tr_resp_history)
 
-    # Log training progress after experiment - kind of hacky (timestamps will be wrong)
+    # Log training progress after experiment - timestamps will be wrong
     for it in range(iterations):
         _run.log_scalar("training.mode_weights", mode_weights_history[it].tolist())
         _run.log_scalar(
             "training.rewards", [r.theta.tolist() for r in rewards_history[it]]
         )
-        _run.log_scalar("training.nll", float(nll_history[it]))
+        _run.log_scalar("training.nll", float(tr_nll_history[it]))
 
-    learned_resp = resp_history[-1]
+    tr_learned_resp = tr_resp_history[-1]
     learned_mode_weights = mode_weights_history[-1]
     learned_rewards = rewards_history[-1]
-    nll = nll_history[-1]
+    tr_nll = tr_nll_history[-1]
     duration = (t1 - t0).total_seconds()
-
-    # Prepare ground truth parameters
-    gt_responsibility_matrix = np.concatenate(
-        [
-            np.repeat([np.eye(gt_num_clusters)[row, :]], rollouts_per_mode, 0)
-            for row in range(gt_num_clusters)
-        ],
-        0,
-    )
-    gt_mode_weights = np.sum(gt_responsibility_matrix, axis=0) / len(
-        gt_responsibility_matrix
-    )
 
     _log.info("Evaluating...")
 
-    # Compute cluster metrics
-    nid = normalized_information_distance(gt_responsibility_matrix, learned_resp)
-    anid = adjusted_normalized_information_distance(
-        gt_responsibility_matrix, learned_resp
+    def eval_clustering(
+        gt_resp, learned_resp,
+    ):
+        """Evaluate a mixture model's clustering performance"""
+
+        # Compute cluster metrics
+        nid = normalized_information_distance(gt_resp, learned_resp)
+        anid = adjusted_normalized_information_distance(gt_resp, learned_resp)
+
+        return nid, anid
+
+    def eval_rewards(
+        gt_mode_weights, gt_rewards, learned_mode_weights, learned_rewards,
+    ):
+        """Evaluate a mixture model's reward performance"""
+        gt_num_clusters = len(gt_mode_weights)
+        num_clusters = len(learned_mode_weights)
+
+        # Compute reward recovery metrics
+        ile_mat = np.zeros((num_clusters, gt_num_clusters))
+        evd_mat = np.zeros((num_clusters, gt_num_clusters))
+        for learned_mode_idx in range(num_clusters):
+            for gt_mode_idx in range(gt_num_clusters):
+                ile, evd = ile_evd(
+                    xtr,
+                    phi,
+                    gt_rewards[gt_mode_idx],
+                    learned_rewards[learned_mode_idx],
+                )
+                ile_mat[learned_mode_idx, gt_mode_idx] = ile
+                evd_mat[learned_mode_idx, gt_mode_idx] = evd
+        mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
+            learned_mode_weights, gt_mode_weights, ile_mat
+        )
+        mcf_evd, mcf_evd_flowdict = min_cost_flow_error_metric(
+            learned_mode_weights, gt_mode_weights, evd_mat
+        )
+
+        return (mcf_ile, mcf_ile_flowdict, mcf_evd, mcf_evd_flowdict)
+
+    # Lambda to get ground truth responsibility matrix
+    gt_resp = lambda k, rpm: (
+        np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
     )
 
-    # Compute reward recovery metrics
-    ile_mat = np.zeros((tr_num_clusters, gt_num_clusters))
-    evd_mat = np.zeros((tr_num_clusters, gt_num_clusters))
-    for learned_mode_idx in range(tr_num_clusters):
-        for gt_mode_idx in range(gt_num_clusters):
-            ile, evd = ile_evd(
-                xtr, phi, gt_rewards[gt_mode_idx], learned_rewards[learned_mode_idx],
-            )
-            ile_mat[learned_mode_idx, gt_mode_idx] = ile
-            evd_mat[learned_mode_idx, gt_mode_idx] = evd
-    mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
-        learned_mode_weights, gt_mode_weights, ile_mat
+    # Evaluate training set clustering
+    tr_nid, tr_anid = eval_clustering(
+        gt_resp(gt_num_clusters, tr_rollouts_per_mode), tr_learned_resp
     )
-    mcf_evd, mcf_evd_flowdict = min_cost_flow_error_metric(
-        learned_mode_weights, gt_mode_weights, evd_mat
+    # Evaluate test set clustering
+    te_learned_resp = solver.estep(
+        xtr_p, phi_p, learned_mode_weights, learned_rewards, te_rollouts
     )
-    mean_ile = mean_error_metric(learned_resp, gt_responsibility_matrix, ile_mat)
-    mean_evd = mean_error_metric(learned_resp, gt_responsibility_matrix, evd_mat)
+    te_nid, te_anid = eval_clustering(
+        gt_resp(gt_num_clusters, te_rollouts_per_mode), te_learned_resp
+    )
+    # Evaluate test set NLL
+    te_nll = solver.mixture_nll(
+        xtr_p, phi_p, learned_mode_weights, learned_rewards, te_rollouts
+    )
+
+    # Evaluate reward performance
+    (mcf_ile, mcf_ile_flowdict, mcf_evd, mcf_evd_flowdict) = eval_rewards(
+        np.ones(gt_num_clusters) / gt_num_clusters,
+        gt_rewards,
+        learned_mode_weights,
+        learned_rewards,
+    )
 
     _log.info("Done...")
 
     return {
+        # Mixture Initialization
         "st_mode_weights": st_mode_weights.tolist(),
         "st_rewards": [st_r.theta.tolist() for st_r in st_rewards],
         "st_nll": float(st_nll),
+        #
+        # Learned model
         "iterations": int(iterations),
-        "learned_resp": learned_resp.tolist(),
+        "duration": float(duration),
         "learned_mode_weights": learned_mode_weights.tolist(),
         "learned_rewards": [learned_r.theta.tolist() for learned_r in learned_rewards],
-        "nll": float(nll),
-        "duration": float(duration),
-        "normalized_information_distance": float(nid),
-        "normalized_information_distance_adjusted": float(anid),
+        #
+        # Training set performance
+        "tr_learned_resp": tr_learned_resp.tolist(),
+        "tr_nll": float(tr_nll),
+        "tr_normalized_information_distance": float(tr_nid),
+        "tr_normalized_information_distance_adjusted": float(tr_anid),
+        #
+        # Test set performance
+        "te_learned_resp": te_learned_resp.tolist(),
+        "te_nll": float(te_nll),
+        "te_normalized_information_distance": float(te_nid),
+        "te_normalized_information_distance_adjusted": float(te_anid),
+        #
+        # Reward performance
         "min_cost_flow_ile": float(mcf_ile),
         "min_cost_flow_ile_flow": mcf_ile_flowdict,
         "min_cost_flow_evd": float(mcf_evd),
         "min_cost_flow_evd_flow": mcf_evd_flowdict,
-        "mean_ile": float(mean_ile),
-        "mean_evd": float(mean_evd),
     }
 
 
@@ -367,8 +393,18 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
+        "-K",
+        "--gt_num_modes",
+        required=False,
+        default=2,
+        choices=(2, 3),
+        type=int,
+        help="Number of ground truth clusters",
+    )
+
+    parser.add_argument(
         "-k",
-        "--num_learned_modes",
+        "--num_modes",
         required=False,
         default=2,
         type=int,
@@ -431,7 +467,8 @@ def main():
     )
 
     _base_config = {
-        "tr_num_clusters": args.num_learned_modes,
+        "gt_num_clusters": args.gt_num_modes,
+        "num_clusters": args.num_modes,
         "rollouts_per_mode": args.rollouts_per_mode,
         "initialisation": args.init,
         "transition_type": "Stochastic" if args.stochastic else "Deterministic",
