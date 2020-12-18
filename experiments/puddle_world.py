@@ -450,6 +450,23 @@ def main():
     args = parser.parse_args()
     print("Arguments:", args, flush=True)
 
+    _base_config = {
+        "gt_num_clusters": args.gt_num_modes,
+        "num_clusters": args.num_modes,
+        "tr_rollouts_per_mode": args.rollouts_per_mode,
+        "initialisation": args.init,
+        "transition_type": "Stochastic" if args.stochastic else "Deterministic",
+    }
+
+    print("META: Base configuration: ")
+    pprint(_base_config)
+
+    configs = []
+    for replicate in range(args.num_replicates):
+        _config = _base_config.copy()
+        _config.update({"replicate": replicate})
+        configs.append(_config)
+
     # Try and determine how many CPUs we are allowed to use
     num_cpus = (
         len(os.sched_getaffinity(0))
@@ -460,25 +477,12 @@ def main():
         else os.cpu_count() - 1
     )
 
-    _base_config = {
-        "gt_num_clusters": args.gt_num_modes,
-        "num_clusters": args.num_modes,
-        "tr_rollouts_per_mode": args.rollouts_per_mode,
-        "initialisation": args.init,
-        "transition_type": "Stochastic" if args.stochastic else "Deterministic",
-    }
+    print(f"META: {num_cpus} CPUs available")
+    num_workers = min(num_cpus, len(configs))
 
     print(
-        f"META: Distributing {args.num_replicates} replicates over {num_cpus} workers"
+        f"META: Distributing {args.num_replicates} replicate(s) over {num_workers} workers"
     )
-    print("META: Base configuration: ")
-    pprint(_base_config)
-
-    configs = []
-    for replicate in range(args.num_replicates):
-        _config = _base_config.copy()
-        _config.update({"replicate": replicate})
-        configs.append(_config)
 
     # Read MongoDB URL from config file, if it exists
     mongodb_config_file = "mongodb-config.txt"
@@ -489,7 +493,7 @@ def main():
 
     # Parallel loop
     with tqdm.tqdm(total=len(configs)) as pbar:
-        with futures.ProcessPoolExecutor(max_workers=num_cpus) as executor:
+        with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
             tasks = {executor.submit(run, config, mongodb_url) for config in configs}
             for future in futures.as_completed(tasks):
                 # Use arg or result here if desired
