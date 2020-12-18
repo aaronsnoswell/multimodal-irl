@@ -164,6 +164,14 @@ class EMSolver(abc.ABC):
 class MaxEntEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxEnt IRL"""
 
+    def __init__(self):
+        """C-tor"""
+
+        # The MaxEnt reward learning objective is convex, so we can safely store the
+        # previous iteration's reward solutions to use as a super-efficient starting
+        # point for the current iteration's reward optimization
+        self._prev_rewards = None
+
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
         """Compute responsibility matrix using MaxEnt reward parameters
         
@@ -214,7 +222,13 @@ class MaxEntEMSolver(EMSolver):
 
             rollout_weights = resp[:, mode_idx]
 
-            theta0 = np.zeros(len(phi))
+            # Because the MaxEnt optimization is convex, we can safely re-use the
+            # previous iteration's reward estimates as an efficient starting point
+            if self._prev_rewards is not None:
+                theta0 = self._prev_rewards[mode_idx]
+            else:
+                theta0 = np.zeros(len(phi))
+
             method = "BFGS"
             reward_parameter_bounds = None
             if reward_range is not None:
@@ -229,6 +243,9 @@ class MaxEntEMSolver(EMSolver):
                 bounds=reward_parameter_bounds,
             )
             rewards.append(Linear(res.x[:]))
+
+        # Store current reward estimate for next time
+        self._prev_rewards = rewards
 
         return rewards
 
@@ -345,8 +362,6 @@ class MaxLikEMSolver(EMSolver):
 
     def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
         """Compute reward parameters given responsibility matrix
-        
-        TODO ajs 2/dec/2020 Support re-using previous reward parameters as starting points
         
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
