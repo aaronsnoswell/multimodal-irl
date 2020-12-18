@@ -225,7 +225,7 @@ class MaxEntEMSolver(EMSolver):
             # Because the MaxEnt optimization is convex, we can safely re-use the
             # previous iteration's reward estimates as an efficient starting point
             if self._prev_rewards is not None:
-                theta0 = self._prev_rewards[mode_idx]
+                theta0 = self._prev_rewards[mode_idx].theta
             else:
                 theta0 = np.zeros(len(phi))
 
