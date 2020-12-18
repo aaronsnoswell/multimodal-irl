@@ -272,7 +272,7 @@ class MaxEntEMSolver(EMSolver):
                 *reward.structured(xtr, phi),
             )
             log_partition_values.append(
-                log_partition(max_path_length, alpha_log, xtr.padded)
+                log_partition(max_path_length, alpha_log, xtr.is_padded)
             )
 
         rollout_lls = []
@@ -430,7 +430,7 @@ class MaxLikEMSolver(EMSolver):
                 *reward.structured(xtr, phi),
             )
             log_partition_values.append(
-                log_partition(max_path_length, alpha_log, xtr.padded)
+                log_partition(max_path_length, alpha_log, xtr.is_padded)
             )
 
         rollout_lls = []
