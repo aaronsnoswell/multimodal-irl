@@ -110,12 +110,13 @@ def canonical_puddle_world(
         raise ValueError
 
     xtr, phi, gt_rewards = puddle_world_extras(env)
+    gt_rewards = list(gt_rewards.values())
 
     if gt_num_clusters == 3:
         pass
     elif gt_num_clusters == 2:
         # Drop 'any' mode
-        gt_rewards = list(gt_rewards.values())[:gt_num_clusters]
+        gt_rewards = gt_rewards[:gt_num_clusters]
     else:
         raise ValueError
 
