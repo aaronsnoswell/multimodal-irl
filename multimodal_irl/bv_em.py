@@ -506,12 +506,12 @@ def bv_em(
         max_iterations (int): Maximum number of iterations (alternate stopping criterion)
 
     Returns:
+        (int): Number of EM iterations performed
         (list): List of responsibility matrix (numpy array) at every iteration
-        (list): List of cluster weights (numpy array) at every iteration
-        (list): List of rewards (mdp_extras.Linear) at every iteration
-        (float): The NLL of the starting configuration
-        (list): List of NLL (float) at every algorithm iteration
-
+        (list): List of cluster weights (numpy array) at the start, and for every iteration
+        (list): List of rewards (mdp_extras.Linear) at the start, and for every iteration
+        (list): List of NLL (float) at the start, and for every algorithm iteration
+        (str): Reason for termination
     """
 
     # Initialize reward parameters and mode weights randomly if not passed
@@ -524,50 +524,58 @@ def bv_em(
     assert len(mode_weights) == num_modes
     assert len(rewards) == num_modes
 
+    # Compute LL
+    nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
+
     resp_history = []
-    mode_weights_history = []
-    rewards_history = []
-    nll_history = []
+    mode_weights_history = [mode_weights]
+    rewards_history = [rewards]
+    nll_history = [nll]
+    reason = ""
     for iteration in it.count():
+
+        # E-step - update responsibility matrix, mixture component weights
+        resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
+        resp_history.append(resp)
+        mode_weights = np.sum(resp, axis=0) / len(rollouts)
+        mode_weights_history.append(mode_weights)
+
+        # M-step - solve for new reward parameters
+        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
+        rewards_history.append(rewards)
 
         # Compute LL
         nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
         nll_history.append(nll)
 
-        if len(nll_history) > 1:
-            if nll_history[-1] > nll_history[-2]:
-                # We've over-stepped a solution point - go back
-                resp_history = resp_history[:-1]
-                mode_weights_history = mode_weights_history[:-1]
-                rewards_history = rewards_history[:-1]
-                nll_history = nll_history[:-1]
-                break
+        # Edge case for only one cluster
+        if num_modes == 1:
+            reason = "Only one cluster to learn"
+            break
 
-            nll_delta = np.abs(nll_history[-2] - nll_history[-1])
-            if nll_delta <= tolerance:
-                # NLL has converged
-                break
-
-        # E-step - update responsibility matrix, mixture component weights
-        resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
-        mode_weights = np.sum(resp, axis=0) / len(rollouts)
-
-        # M-step - solve for new reward parameters
-        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
-
-        resp_history.append(resp)
-        mode_weights_history.append(mode_weights)
-        rewards_history.append(rewards)
+        # Check NLL delta
+        nll_deltas = np.diff(nll_history)
+        if not np.all(nll_deltas <= 0):
+            reason = "NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding"
+            break
+        elif np.abs(nll_deltas[-1]) <= tolerance:
+            # NLL has converged
+            reason = "NLL converged: |NLL delta| <= tol"
+            break
 
         # Check for max iterations stopping condition
-        if max_iterations is not None and iteration >= max_iterations:
+        if max_iterations is not None and iteration >= max_iterations - 1:
+            reason = "Max iterations reached"
             break
 
     return (
+        iteration + 1,
         resp_history,
         mode_weights_history,
         rewards_history,
-        nll_history[0],
-        nll_history[1:],
+        nll_history,
+        reason,
+    )
+
     )
 

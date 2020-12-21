@@ -180,11 +180,12 @@ def canonical_puddle_world(
         raise ValueError
 
     (
+        iterations,
         tr_resp_history,
         mode_weights_history,
         rewards_history,
-        st_nll,
         tr_nll_history,
+        reason,
     ) = bv_em(
         solver,
         xtr_p,
@@ -199,10 +200,8 @@ def canonical_puddle_world(
 
     t1 = datetime.now()
 
-    iterations = len(tr_resp_history)
-
     # Log training progress after experiment - timestamps will be wrong
-    for it in range(iterations):
+    for it in range(iterations + 1):
         _run.log_scalar("training.mode_weights", mode_weights_history[it].tolist())
         _run.log_scalar(
             "training.rewards", [r.theta.tolist() for r in rewards_history[it]]
@@ -292,13 +291,14 @@ def canonical_puddle_world(
         # Mixture Initialization
         "st_mode_weights": st_mode_weights.tolist(),
         "st_rewards": [st_r.theta.tolist() for st_r in st_rewards],
-        "st_nll": float(st_nll),
+        "st_nll": float(tr_nll_history[0]),
         #
         # Learned model
         "iterations": int(iterations),
         "duration": float(duration),
         "learned_mode_weights": learned_mode_weights.tolist(),
         "learned_rewards": [learned_r.theta.tolist() for learned_r in learned_rewards],
+        "reason": reason,
         #
         # Training set performance
         "tr_learned_resp": tr_learned_resp.tolist(),
@@ -327,7 +327,7 @@ def run(config, mongodb_url="localhost:27017"):
     if not ex.observers:
         ex.observers.append(MongoObserver(url=mongodb_url))
 
-    # Supress warnings about padded MPDs
+    # Suppress warnings about padded MPDs
     with warnings.catch_warnings():
         warnings.filterwarnings(action="ignore", category=PaddedMDPWarning)
 
