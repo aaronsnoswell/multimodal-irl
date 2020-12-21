@@ -576,6 +576,3 @@ def bv_em(
         nll_history,
         reason,
     )
-
-    )
-
