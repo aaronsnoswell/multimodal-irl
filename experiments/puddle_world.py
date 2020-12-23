@@ -467,6 +467,15 @@ def main():
     )
 
     parser.add_argument(
+        "-w",
+        "--num_workers",
+        required=False,
+        default=None,
+        type=int,
+        help="Number of workers to use - if not provided, will be inferred from system and workload",
+    )
+
+    parser.add_argument(
         "-i",
         "--init",
         required=False,
@@ -531,7 +540,10 @@ def main():
     )
 
     print(f"META: {num_cpus} CPUs available")
-    num_workers = min(num_cpus, len(configs))
+    if args.num_workers is not None:
+        num_workers = min(num_cpus, len(configs))
+    else:
+        num_workers = min(num_cpus, len(configs), args.num_workers)
 
     print(
         f"META: Distributing {args.num_replicates} replicate(s) over {num_workers} workers"
