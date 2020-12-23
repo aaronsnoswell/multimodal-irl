@@ -167,6 +167,11 @@ def canonical_puddle_world(
     else:
         raise ValueError
 
+    # Lambda to get ground truth responsibility matrix
+    gt_resp = lambda k, rpm: (
+        np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
+    )
+
     _log.info("Solving...")
     t0 = datetime.now()
 
@@ -185,27 +190,55 @@ def canonical_puddle_world(
         st_mode_weights, st_rewards = solver.init_gmm(
             xtr_p, phi_p, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
         )
+    elif initialisation == "Baseline":
+
+        # This is a baseline experiment - simply set the clusters to the ground truth
+        # model
+
+        # We always have uniform clusters in these experiments
+        assert num_clusters == gt_num_clusters
+
+        # Use ground truth responsibility matrix and cluster weights
+        _resp = gt_resp(num_clusters, tr_rollouts_per_mode)
+        st_mode_weights = np.sum(_resp, axis=0) / len(_resp)
+
+        # Learn rewards with ground truth responsibility matrix
+        st_rewards = solver.mstep(xtr_p, phi_p, _resp, tr_rollouts_p, reward_range)
+
+        # Compute baseline NLL
+        _nll = solver.mixture_nll(
+            xtr_p, phi_p, st_mode_weights, st_rewards, tr_rollouts_p
+        )
+
+        iterations = 0
+        tr_resp_history = [_resp]
+        mode_weights_history = [st_mode_weights]
+        rewards_history = [st_rewards]
+        tr_nll_history = [_nll]
+        reason = "Baseline model - EM loop skipped"
+
     else:
         raise ValueError
 
-    (
-        iterations,
-        tr_resp_history,
-        mode_weights_history,
-        rewards_history,
-        tr_nll_history,
-        reason,
-    ) = bv_em(
-        solver,
-        xtr_p,
-        phi_p,
-        tr_rollouts_p,
-        num_clusters,
-        reward_range,
-        mode_weights=st_mode_weights,
-        rewards=st_rewards,
-        tolerance=tolerance,
-    )
+    if initialisation != "Baseline":
+        (
+            iterations,
+            tr_resp_history,
+            mode_weights_history,
+            rewards_history,
+            tr_nll_history,
+            reason,
+        ) = bv_em(
+            solver,
+            xtr_p,
+            phi_p,
+            tr_rollouts_p,
+            num_clusters,
+            reward_range,
+            mode_weights=st_mode_weights,
+            rewards=st_rewards,
+            tolerance=tolerance,
+        )
 
     t1 = datetime.now()
 
@@ -264,11 +297,6 @@ def canonical_puddle_world(
         )
 
         return (mcf_ile, mcf_ile_flowdict, mcf_evd, mcf_evd_flowdict)
-
-    # Lambda to get ground truth responsibility matrix
-    gt_resp = lambda k, rpm: (
-        np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
-    )
 
     # Evaluate training set clustering
     tr_nid, tr_anid = eval_clustering(
@@ -444,7 +472,7 @@ def main():
         required=False,
         type=str,
         default="Random",
-        choices=("Random", "KMeans", "GMM"),
+        choices=("Random", "KMeans", "GMM", "Baseline"),
         help="Initialisation method to use",
     )
 
