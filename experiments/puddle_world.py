@@ -146,16 +146,24 @@ def canonical_puddle_world(
         te_rollouts_structured.append(_te_rollouts)
         te_rollouts.extend(_te_rollouts)
 
-    # Apply padding trick
-    xtr_p, phi_p, gt_rewards_p, tr_rollouts_p = padding_trick_mm(
-        xtr, phi, gt_rewards, tr_rollouts
-    )
-
     # Get solver object
     if algorithm == "MaxEnt":
         solver = MaxEntEMSolver()
+
+        # Apply padding trick
+        xtr_p, phi_p, gt_rewards_p, tr_rollouts_p = padding_trick_mm(
+            xtr, phi, gt_rewards, tr_rollouts
+        )
+
     elif algorithm == "MaxLik":
         solver = MaxLikEMSolver()
+
+        # Dummy padded variables
+        xtr_p = xtr
+        phi_p = phi
+        gt_rewards_p = gt_rewards
+        tr_rollouts_p = tr_rollouts
+
     else:
         raise ValueError
 
@@ -407,6 +415,16 @@ def main():
     )
 
     parser.add_argument(
+        "-a",
+        "--algorithm",
+        required=False,
+        default="MaxEnt",
+        type=str,
+        choices=("MaxEnt", "MaxLik"),
+        help="IRL model + algorithm to use in EM inner loop",
+    )
+
+    parser.add_argument(
         "-n",
         "--rollouts_per_mode",
         required=False,
@@ -452,6 +470,7 @@ def main():
     print("Arguments:", args, flush=True)
 
     _base_config = {
+        "algorithm": args.algorithm,
         "gt_num_clusters": args.gt_num_modes,
         "num_clusters": args.num_modes,
         "tr_rollouts_per_mode": args.rollouts_per_mode,
@@ -506,7 +525,7 @@ def main():
 
     # # Non-parallel loop for debugging
     # for config in tqdm.tqdm(configs):
-    #     run(config)
+    #     run(config, mongodb_url)
 
     print("META: Finished replicate sweep")
 
