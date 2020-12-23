@@ -34,10 +34,10 @@ from multimodal_irl.metrics import (
 from unimodal_irl.metrics import ile_evd
 
 # Global experiment object
-ex = Experiment()
+# ex = Experiment()
 
 # Attach experiment config
-@ex.config
+# @ex.config
 def base_config():
 
     # Type of transitions
@@ -78,7 +78,7 @@ def base_config():
 
 
 # Attach experiment main()
-@ex.main
+# @ex.main
 def canonical_puddle_world(
     transition_type,
     environment,
@@ -331,6 +331,11 @@ def canonical_puddle_world(
 
 def run(config, mongodb_url="localhost:27017"):
     """Run a single experiment with the given configuration"""
+
+    # Dynamically bind experiment config and main function
+    ex = Experiment()
+    ex.config(base_config)
+    ex.main(canonical_puddle_world)
 
     # Attach MongoDB observer if necessary
     if not ex.observers:
