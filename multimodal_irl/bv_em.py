@@ -298,13 +298,48 @@ class MaxEntEMSolver(EMSolver):
 
         log_partition_values = []
         for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
-            alpha_log = nb_backward_pass_log(
-                xtr.p0s,
-                max_path_length,
-                xtr.t_mat,
-                xtr.gamma,
-                *reward.structured(xtr, phi),
-            )
+            if isinstance(xtr, DiscreteExplicitExtras):
+                # Process tabular MDP
+                # Catch float overflow as an error - reward magnitude is too large for
+                # exponentiation with this max path length
+                with np.errstate(over="raise"):
+                    alpha_log = nb_backward_pass_log(
+                        xtr.p0s,
+                        max_path_length,
+                        xtr.t_mat,
+                        xtr.gamma,
+                        *reward.structured(xtr, phi),
+                    )
+            elif isinstance(xtr, DiscreteImplicitExtras):
+                # Handle Implicit dynamics MDP
+
+                # Only supports state features - otherwise we run out of memory
+                assert (
+                    phi.type == phi.Type.OBSERVATION
+                ), "For DiscreteImplicit MPDs only state-based rewards are supported"
+
+                # Only supports deterministic transitions
+                assert (
+                    xtr.is_deterministic
+                ), "For DiscreteImplicit MPDs only deterministic dynamics are supported"
+
+                rs = np.array([reward(phi(s)) for s in xtr.states])
+
+                # Catch float overflow as an error - reward magnitude is too large for
+                # exponentiation with this max path length
+                with np.errstate(over="raise"):
+                    # Compute alpha_log
+                    alpha_log = nb_backward_pass_log_deterministic_stateonly(
+                        xtr.p0s,
+                        max_path_length,
+                        xtr.parents_fixedsize,
+                        rs,
+                        gamma=xtr.gamma,
+                        padded=xtr.is_padded,
+                    )
+            else:
+                raise ValueError(f"Unknown MDP class {xtr}")
+
             log_partition_values.append(
                 log_partition(max_path_length, alpha_log, xtr.is_padded)
             )
