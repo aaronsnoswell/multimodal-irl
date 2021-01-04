@@ -229,6 +229,11 @@ class MaxEntEMSolver(EMSolver):
             else:
                 theta0 = np.zeros(len(phi))
 
+            max_path_length = max(*[len(r) for r in rollouts])
+            phi_bar = phi.expectation(
+                rollouts, gamma=xtr.gamma, weights=rollout_weights
+            )
+
             method = "BFGS"
             reward_parameter_bounds = None
             if reward_range is not None:
@@ -237,7 +242,7 @@ class MaxEntEMSolver(EMSolver):
             res = minimize(
                 sw_maxent_irl,
                 theta0,
-                args=(xtr, phi, rollouts, rollout_weights),
+                args=(xtr, phi, phi_bar, max_path_length),
                 method=method,
                 jac=True,
                 bounds=reward_parameter_bounds,
