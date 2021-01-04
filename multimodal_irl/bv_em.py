@@ -500,6 +500,7 @@ def bv_em(
     rewards=None,
     tolerance=1e-5,
     max_iterations=None,
+    minimize_kwargs={},
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
@@ -558,7 +559,14 @@ def bv_em(
         mode_weights_history.append(mode_weights)
 
         # M-step - solve for new reward parameters
-        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
+        rewards = solver.mstep(
+            xtr,
+            phi,
+            resp,
+            rollouts,
+            reward_range=reward_range,
+            minimize_kwargs=minimize_kwargs,
+        )
         rewards_history.append(rewards)
 
         # Compute LL
