@@ -17,10 +17,19 @@ from unimodal_irl import (
     sw_maxent_irl,
     maxent_path_logprobs,
     nb_backward_pass_log,
+    nb_backward_pass_log_deterministic_stateonly,
     log_partition,
     bv_maxlikelihood_irl,
 )
-from mdp_extras import Linear, trajectory_reward, q_vi, BoltzmannExplorationPolicy, v_vi
+from mdp_extras import (
+    Linear,
+    trajectory_reward,
+    q_vi,
+    BoltzmannExplorationPolicy,
+    v_vi,
+    DiscreteExplicitExtras,
+    DiscreteImplicitExtras,
+)
 
 
 class EMSolver(abc.ABC):
