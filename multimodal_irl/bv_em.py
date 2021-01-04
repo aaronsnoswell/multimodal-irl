@@ -209,7 +209,7 @@ class MaxEntEMSolver(EMSolver):
 
         return resp
 
-    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+    def mstep(self, xtr, phi, resp, rollouts, reward_range=None, minimize_kwargs={}):
         """Compute reward parameters given responsibility matrix
         
         TODO ajs 2/dec/2020 Support re-using previous reward parameters as starting points
@@ -255,6 +255,7 @@ class MaxEntEMSolver(EMSolver):
                 method=method,
                 jac=True,
                 bounds=reward_parameter_bounds,
+                **minimize_kwargs,
             )
             rewards.append(Linear(res.x[:]))
 
