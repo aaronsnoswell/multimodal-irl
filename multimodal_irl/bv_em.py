@@ -35,8 +35,16 @@ from mdp_extras import (
 class EMSolver(abc.ABC):
     """An abstract base class for a Multi-Modal IRL EM solver"""
 
-    def __init__(self):
-        """C-tor"""
+    def __init__(self, minimize_kwargs={}, minimize_options={}):
+        """C-tor
+        
+        Args:
+            minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
+            minimize_options (dict): Optional args for the scipy.optimize.minimize
+                'options' parameter
+        """
+        self.minimize_kwargs = minimize_kwargs
+        self.minimize_options = minimize_options
         pass
 
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
@@ -55,7 +63,14 @@ class EMSolver(abc.ABC):
         """
         raise NotImplementedError
 
-    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+    def mstep(
+        self,
+        xtr,
+        phi,
+        resp,
+        rollouts,
+        reward_range=None
+    ):
         """Compute reward parameters given responsibility matrix
         
         Args:
@@ -63,6 +78,8 @@ class EMSolver(abc.ABC):
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             rollouts (list): Demonstration data
+            
+            reward_range (tuple): Optional reward parameter min and max values
     
         Returns:
             (list): List of Linear reward functions
@@ -98,7 +115,9 @@ class EMSolver(abc.ABC):
         return mode_weights, rewards
 
     def init_kmeans(
-        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
+        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000,
+        minimize_kwargs={},
+        minimize_options={},
     ):
         """Initialize mixture model with KMeans (hard clustering)
         
@@ -173,9 +192,17 @@ class EMSolver(abc.ABC):
 class MaxEntEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxEnt IRL"""
 
-    def __init__(self):
-        """C-tor"""
-
+    def __init__(self, minimize_kwargs={}, minimize_options={}):
+        """C-tor
+        
+        Args:
+            minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
+            minimize_options (dict): Optional args for the scipy.optimize.minimize
+                'options' parameter
+        """
+        
+        super().__init__(minimize_kwargs, minimize_options)
+        
         # The MaxEnt reward learning objective is convex, so we can safely store the
         # previous iteration's reward solutions to use as a super-efficient starting
         # point for the current iteration's reward optimization
@@ -209,16 +236,23 @@ class MaxEntEMSolver(EMSolver):
 
         return resp
 
-    def mstep(self, xtr, phi, resp, rollouts, reward_range=None, minimize_kwargs={}):
+    def mstep(
+        self,
+        xtr,
+        phi,
+        resp,
+        rollouts,
+        reward_range=None,
+    ):
         """Compute reward parameters given responsibility matrix
-        
-        TODO ajs 2/dec/2020 Support re-using previous reward parameters as starting points
         
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             rollouts (list): Demonstration data
+            
+            reward_range (tuple): Optional reward parameter min and max values
     
         Returns:
             (list): List of Linear reward functions
@@ -255,7 +289,8 @@ class MaxEntEMSolver(EMSolver):
                 method=method,
                 jac=True,
                 bounds=reward_parameter_bounds,
-                **minimize_kwargs,
+                options=self.minimize_options,
+                **(self.minimize_kwargs)
             )
             rewards.append(Linear(res.x[:]))
 
@@ -371,13 +406,18 @@ class MaxEntEMSolver(EMSolver):
 class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
-    def __init__(self, boltzman_scale=0.5, qge_tol=1e-3):
+    def __init__(self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}):
         """C-tor
         
         Args:
             boltzman_scale (float): Boltzmann policy scale factor
             qge_tol (float): Tolerance for Q-function gradient estimation
+            minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
+            minimize_options (dict): Optional args for the scipy.optimize.minimize
+                'options' parameter
         """
+        super().__init__(minimize_kwargs, minimize_options)
+        
         self._boltzman_scale = boltzman_scale
         self._qge_tol = qge_tol
 
@@ -412,7 +452,14 @@ class MaxLikEMSolver(EMSolver):
 
         return resp
 
-    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
+    def mstep(
+        self,
+        xtr,
+        phi,
+        resp,
+        rollouts,
+        reward_range=None,
+    ):
         """Compute reward parameters given responsibility matrix
         
         Args:
@@ -420,6 +467,8 @@ class MaxLikEMSolver(EMSolver):
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             rollouts (list): Demonstration data
+            
+            reward_range (tuple): Optional reward parameter min and max values
     
         Returns:
             (list): List of Linear reward functions
@@ -452,6 +501,8 @@ class MaxLikEMSolver(EMSolver):
                 method=method,
                 jac=True,
                 bounds=reward_parameter_bounds,
+                options=self.minimize_options,
+                **(self.minimize_kwargs)
             )
             rewards.append(Linear(res.x[:]))
 
@@ -534,8 +585,7 @@ def bv_em(
     mode_weights=None,
     rewards=None,
     tolerance=1e-5,
-    max_iterations=None,
-    minimize_kwargs={},
+    max_iterations=None
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
@@ -599,8 +649,7 @@ def bv_em(
             phi,
             resp,
             rollouts,
-            reward_range=reward_range,
-            minimize_kwargs=minimize_kwargs,
+            reward_range=reward_range
         )
         rewards_history.append(rewards)
 
