@@ -63,14 +63,7 @@ class EMSolver(abc.ABC):
         """
         raise NotImplementedError
 
-    def mstep(
-        self,
-        xtr,
-        phi,
-        resp,
-        rollouts,
-        reward_range=None
-    ):
+    def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
         """Compute reward parameters given responsibility matrix
         
         Args:
@@ -115,9 +108,7 @@ class EMSolver(abc.ABC):
         return mode_weights, rewards
 
     def init_kmeans(
-        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000,
-        minimize_kwargs={},
-        minimize_options={},
+        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
     ):
         """Initialize mixture model with KMeans (hard clustering)
         
@@ -200,9 +191,9 @@ class MaxEntEMSolver(EMSolver):
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
         """
-        
+
         super().__init__(minimize_kwargs, minimize_options)
-        
+
         # The MaxEnt reward learning objective is convex, so we can safely store the
         # previous iteration's reward solutions to use as a super-efficient starting
         # point for the current iteration's reward optimization
@@ -225,6 +216,10 @@ class MaxEntEMSolver(EMSolver):
 
         num_modes = len(mode_weights)
 
+        # Shortcut for K=1
+        if num_modes == 1:
+            return np.array([np.ones(len(rollouts))]).T
+
         resp = np.ones((len(rollouts), num_modes))
         for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
             resp[:, mode_idx] = mode_weight * np.exp(
@@ -237,12 +232,7 @@ class MaxEntEMSolver(EMSolver):
         return resp
 
     def mstep(
-        self,
-        xtr,
-        phi,
-        resp,
-        rollouts,
-        reward_range=None,
+        self, xtr, phi, resp, rollouts, reward_range=None,
     ):
         """Compute reward parameters given responsibility matrix
         
@@ -290,7 +280,7 @@ class MaxEntEMSolver(EMSolver):
                 jac=True,
                 bounds=reward_parameter_bounds,
                 options=self.minimize_options,
-                **(self.minimize_kwargs)
+                **(self.minimize_kwargs),
             )
             rewards.append(Linear(res.x[:]))
 
@@ -406,7 +396,9 @@ class MaxEntEMSolver(EMSolver):
 class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
-    def __init__(self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}):
+    def __init__(
+        self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}
+    ):
         """C-tor
         
         Args:
@@ -417,7 +409,7 @@ class MaxLikEMSolver(EMSolver):
                 'options' parameter
         """
         super().__init__(minimize_kwargs, minimize_options)
-        
+
         self._boltzman_scale = boltzman_scale
         self._qge_tol = qge_tol
 
@@ -438,6 +430,10 @@ class MaxLikEMSolver(EMSolver):
 
         num_modes = len(mode_weights)
 
+        # Shortcut for K=1
+        if num_modes == 1:
+            return np.array([np.ones(len(rollouts))]).T
+
         resp = np.ones((len(rollouts), num_modes))
         for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
             q_star = q_vi(xtr, phi, reward)
@@ -453,12 +449,7 @@ class MaxLikEMSolver(EMSolver):
         return resp
 
     def mstep(
-        self,
-        xtr,
-        phi,
-        resp,
-        rollouts,
-        reward_range=None,
+        self, xtr, phi, resp, rollouts, reward_range=None,
     ):
         """Compute reward parameters given responsibility matrix
         
@@ -502,7 +493,7 @@ class MaxLikEMSolver(EMSolver):
                 jac=True,
                 bounds=reward_parameter_bounds,
                 options=self.minimize_options,
-                **(self.minimize_kwargs)
+                **(self.minimize_kwargs),
             )
             rewards.append(Linear(res.x[:]))
 
@@ -585,7 +576,7 @@ def bv_em(
     mode_weights=None,
     rewards=None,
     tolerance=1e-5,
-    max_iterations=None
+    max_iterations=None,
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
@@ -644,13 +635,7 @@ def bv_em(
         mode_weights_history.append(mode_weights)
 
         # M-step - solve for new reward parameters
-        rewards = solver.mstep(
-            xtr,
-            phi,
-            resp,
-            rollouts,
-            reward_range=reward_range
-        )
+        rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
         rewards_history.append(rewards)
 
         # Compute LL
