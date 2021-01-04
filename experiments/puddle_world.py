@@ -541,9 +541,9 @@ def main():
 
     print(f"META: {num_cpus} CPUs available")
     if args.num_workers is not None:
-        num_workers = min(num_cpus, len(configs))
-    else:
         num_workers = min(num_cpus, len(configs), args.num_workers)
+    else:
+        num_workers = min(num_cpus, len(configs))
 
     print(
         f"META: Distributing {args.num_replicates} replicate(s) over {num_workers} workers"
