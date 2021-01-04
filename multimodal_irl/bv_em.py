@@ -284,9 +284,11 @@ class MaxEntEMSolver(EMSolver):
         for that mixture component
     
         Args:
-            env (explicit_env.IExplicitEnv): Environment defining dynamics
-            rollouts (list): List of state-action rollouts
+            xtr (): Extras object
+            phi (): Features object
             mode_weights (list): List of prior probabilities for each mode
+            rewards (): reward
+            rollouts (list): List of state-action rollouts
     
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
