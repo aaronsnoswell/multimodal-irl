@@ -35,16 +35,22 @@ from mdp_extras import (
 class EMSolver(abc.ABC):
     """An abstract base class for a Multi-Modal IRL EM solver"""
 
-    def __init__(self, minimize_kwargs={}, minimize_options={}):
+    def __init__(self, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None):
         """C-tor
         
         Args:
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
+            pre_it (callable): Optional function accepting the current iteration - called
+                before that iteration commences
+            post_it (callable): Optional function accepting the current iteration - called
+                after that iteration ends
         """
         self.minimize_kwargs = minimize_kwargs
         self.minimize_options = minimize_options
+        self.pre_it = pre_it
+        self.post_it = post_it
         pass
 
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
@@ -183,16 +189,20 @@ class EMSolver(abc.ABC):
 class MaxEntEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxEnt IRL"""
 
-    def __init__(self, minimize_kwargs={}, minimize_options={}):
+    def __init__(self, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None):
         """C-tor
         
         Args:
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
+            pre_it (callable): Optional function accepting the current iteration - called
+                before that iteration commences
+            post_it (callable): Optional function accepting the current iteration - called
+                after that iteration ends
         """
 
-        super().__init__(minimize_kwargs, minimize_options)
+        super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
 
         # The MaxEnt reward learning objective is convex, so we can safely store the
         # previous iteration's reward solutions to use as a super-efficient starting
@@ -399,7 +409,7 @@ class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
     def __init__(
-        self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}
+        self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None
     ):
         """C-tor
         
@@ -409,8 +419,12 @@ class MaxLikEMSolver(EMSolver):
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
+            pre_it (callable): Optional function accepting the current iteration - called
+                before that iteration commences
+            post_it (callable): Optional function accepting the current iteration - called
+                after that iteration ends
         """
-        super().__init__(minimize_kwargs, minimize_options)
+        super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
 
         self._boltzman_scale = boltzman_scale
         self._qge_tol = qge_tol
@@ -629,6 +643,9 @@ def bv_em(
     nll_history = [nll]
     reason = ""
     for iteration in it.count():
+        
+        # Call user pre-iteration callback
+        solver.pre_it(iteration)
 
         # E-step - update responsibility matrix, mixture component weights
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
@@ -663,6 +680,9 @@ def bv_em(
         if max_iterations is not None and iteration >= max_iterations - 1:
             reason = "Max iterations reached"
             break
+        
+        # Call user post-iteration callback
+        solver.post_it(iteration)
 
     return (
         iteration + 1,
