@@ -388,7 +388,9 @@ class MaxEntEMSolver(EMSolver):
             rollout_lls.append(np.log(rollout_likelihood))
 
         # Find average path negative log likelihood
-        nll = -1 * np.mean(rollout_lls)
+        # We filter out paths that have LL of -infinity here
+        # This could, in theory, cause the NLL to be non-monotonic in a future iteration
+        nll = -1 * np.mean(np.array(rollout_lls)[np.isfinite(rollout_lls)])
 
         return nll
 
