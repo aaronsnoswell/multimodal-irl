@@ -24,7 +24,7 @@ from multimodal_irl.envs import (
     CanonicalPuddleWorldEnv,
     puddle_world_extras,
 )
-from mdp_extras import OptimalPolicy, padding_trick_mm, q_vi, PaddedMDPWarning
+from mdp_extras import OptimalPolicy, padding_trick, q_vi, PaddedMDPWarning
 
 from multimodal_irl.metrics import (
     normalized_information_distance,
@@ -95,7 +95,7 @@ def canonical_puddle_world(
     _run,
 ):
 
-    _log.info("Initializing")
+    _log.info("Loading...")
 
     if transition_type == "Stochastic":
         wind = 0.2
@@ -151,17 +151,13 @@ def canonical_puddle_world(
         solver = MaxEntEMSolver()
 
         # Apply padding trick
-        xtr_p, phi_p, gt_rewards_p, tr_rollouts_p = padding_trick_mm(
-            xtr, phi, gt_rewards, tr_rollouts
-        )
+        xtr_p, tr_rollouts_p = padding_trick(xtr, tr_rollouts)
 
     elif algorithm == "MaxLik":
         solver = MaxLikEMSolver()
 
         # Dummy padded variables
         xtr_p = xtr
-        phi_p = phi
-        gt_rewards_p = gt_rewards
         tr_rollouts_p = tr_rollouts
 
     else:
@@ -171,92 +167,6 @@ def canonical_puddle_world(
     gt_resp = lambda k, rpm: (
         np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
     )
-
-    _log.info("Solving...")
-    t0 = datetime.now()
-
-    if initialisation == "Random":
-        # Initialize uniformly at random
-        st_mode_weights, st_rewards = solver.init_random(
-            phi_p, num_clusters, reward_range
-        )
-    elif initialisation == "KMeans":
-        # Initialize with K-Means (hard) clustering
-        st_mode_weights, st_rewards = solver.init_kmeans(
-            xtr_p, phi_p, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
-        )
-    elif initialisation == "GMM":
-        # Initialize with GMM (soft) clustering
-        st_mode_weights, st_rewards = solver.init_gmm(
-            xtr_p, phi_p, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
-        )
-    elif initialisation == "Baseline":
-
-        # This is a baseline experiment - simply set the clusters to the ground truth
-        # model
-
-        # We always have uniform clusters in these experiments
-        assert num_clusters == gt_num_clusters
-
-        # Use ground truth responsibility matrix and cluster weights
-        _resp = gt_resp(num_clusters, tr_rollouts_per_mode)
-        st_mode_weights = np.sum(_resp, axis=0) / len(_resp)
-
-        # Learn rewards with ground truth responsibility matrix
-        st_rewards = solver.mstep(xtr_p, phi_p, _resp, tr_rollouts_p, reward_range)
-
-        # Compute baseline NLL
-        _nll = solver.mixture_nll(
-            xtr_p, phi_p, st_mode_weights, st_rewards, tr_rollouts_p
-        )
-
-        iterations = 0
-        tr_resp_history = [_resp]
-        mode_weights_history = [st_mode_weights]
-        rewards_history = [st_rewards]
-        tr_nll_history = [_nll]
-        reason = "Baseline model - EM loop skipped"
-
-    else:
-        raise ValueError
-
-    if initialisation != "Baseline":
-        (
-            iterations,
-            tr_resp_history,
-            mode_weights_history,
-            rewards_history,
-            tr_nll_history,
-            reason,
-        ) = bv_em(
-            solver,
-            xtr_p,
-            phi_p,
-            tr_rollouts_p,
-            num_clusters,
-            reward_range,
-            mode_weights=st_mode_weights,
-            rewards=st_rewards,
-            tolerance=tolerance,
-        )
-
-    t1 = datetime.now()
-
-    # Log training progress after experiment - timestamps will be wrong
-    for it in range(iterations + 1):
-        _run.log_scalar("training.mode_weights", mode_weights_history[it].tolist())
-        _run.log_scalar(
-            "training.rewards", [r.theta.tolist() for r in rewards_history[it]]
-        )
-        _run.log_scalar("training.nll", float(tr_nll_history[it]))
-
-    tr_learned_resp = tr_resp_history[-1]
-    learned_mode_weights = mode_weights_history[-1]
-    learned_rewards = rewards_history[-1]
-    tr_nll = tr_nll_history[-1]
-    duration = (t1 - t0).total_seconds()
-
-    _log.info("Evaluating...")
 
     def eval_clustering(
         gt_resp, learned_resp,
@@ -298,20 +208,140 @@ def canonical_puddle_world(
 
         return (mcf_ile, mcf_ile_flowdict, mcf_evd, mcf_evd_flowdict)
 
+    _log.info("Initialising...")
+    t0 = datetime.now()
+
+    if initialisation == "Random":
+        # Initialize uniformly at random
+        st_mode_weights, st_rewards = solver.init_random(
+            phi, num_clusters, reward_range
+        )
+    elif initialisation == "KMeans":
+        # Initialize with K-Means (hard) clustering
+        st_mode_weights, st_rewards = solver.init_kmeans(
+            xtr_p, phi, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
+        )
+    elif initialisation == "GMM":
+        # Initialize with GMM (soft) clustering
+        st_mode_weights, st_rewards = solver.init_gmm(
+            xtr_p, phi, tr_rollouts_p, num_clusters, reward_range, num_init_restarts
+        )
+    elif initialisation == "Baseline":
+
+        # This is a baseline experiment - simply set the clusters to the ground truth
+        # model
+
+        # We always have uniform clusters in these experiments
+        assert num_clusters == gt_num_clusters
+
+        # Use ground truth responsibility matrix and cluster weights
+        _resp = gt_resp(num_clusters, tr_rollouts_per_mode)
+        st_mode_weights = np.sum(_resp, axis=0) / len(_resp)
+
+        # Learn rewards with ground truth responsibility matrix
+        st_rewards = solver.mstep(xtr_p, phi, _resp, tr_rollouts_p, reward_range)
+
+        # Compute baseline NLL
+        _nll = solver.mixture_nll(
+            xtr_p, phi, st_mode_weights, st_rewards, tr_rollouts_p
+        )
+
+        iterations = 0
+        tr_resp_history = [_resp]
+        mode_weights_history = [st_mode_weights]
+        rewards_history = [st_rewards]
+        tr_nll_history = [_nll]
+        reason = "Baseline model - EM loop skipped"
+
+        # No initial solution for baseline models
+        init_nid = np.nan
+        init_anid = np.nan
+        init_nll = np.nan
+        init_mcf_ile = np.nan
+        init_mcf_ile_flowdict = {}
+        init_mcf_evd = np.nan
+        init_mcf_evd_flowdict = {}
+
+    else:
+        raise ValueError
+
+    if initialisation != "Baseline":
+        _log.info("Evaluating initial solution...")
+
+        init_learned_resp = solver.estep(
+            xtr_p, phi, st_mode_weights, st_rewards, te_rollouts
+        )
+        init_nid, init_anid = eval_clustering(
+            gt_resp(gt_num_clusters, te_rollouts_per_mode), init_learned_resp
+        )
+        init_nll = solver.mixture_nll(
+            xtr_p, phi, st_mode_weights, st_rewards, te_rollouts
+        )
+        (
+            init_mcf_ile,
+            init_mcf_ile_flowdict,
+            init_mcf_evd,
+            init_mcf_evd_flowdict,
+        ) = eval_rewards(
+            np.ones(gt_num_clusters) / gt_num_clusters,
+            gt_rewards,
+            st_mode_weights,
+            st_rewards,
+        )
+
+    _log.info("Solving...")
+    if initialisation != "Baseline":
+        (
+            iterations,
+            tr_resp_history,
+            mode_weights_history,
+            rewards_history,
+            tr_nll_history,
+            reason,
+        ) = bv_em(
+            solver,
+            xtr_p,
+            phi,
+            tr_rollouts_p,
+            num_clusters,
+            reward_range,
+            mode_weights=st_mode_weights,
+            rewards=st_rewards,
+            tolerance=tolerance,
+        )
+
+    t1 = datetime.now()
+
+    # Log training progress after experiment - timestamps will be wrong
+    for it in range(iterations + 1):
+        _run.log_scalar("training.mode_weights", mode_weights_history[it].tolist())
+        _run.log_scalar(
+            "training.rewards", [r.theta.tolist() for r in rewards_history[it]]
+        )
+        _run.log_scalar("training.nll", float(tr_nll_history[it]))
+
+    tr_learned_resp = tr_resp_history[-1]
+    learned_mode_weights = mode_weights_history[-1]
+    learned_rewards = rewards_history[-1]
+    tr_nll = tr_nll_history[-1]
+    duration = (t1 - t0).total_seconds()
+
+    _log.info("Evaluating...")
+
     # Evaluate training set clustering
     tr_nid, tr_anid = eval_clustering(
         gt_resp(gt_num_clusters, tr_rollouts_per_mode), tr_learned_resp
     )
     # Evaluate test set clustering
     te_learned_resp = solver.estep(
-        xtr_p, phi_p, learned_mode_weights, learned_rewards, te_rollouts
+        xtr_p, phi, learned_mode_weights, learned_rewards, te_rollouts
     )
     te_nid, te_anid = eval_clustering(
         gt_resp(gt_num_clusters, te_rollouts_per_mode), te_learned_resp
     )
     # Evaluate test set NLL
     te_nll = solver.mixture_nll(
-        xtr_p, phi_p, learned_mode_weights, learned_rewards, te_rollouts
+        xtr_p, phi, learned_mode_weights, learned_rewards, te_rollouts
     )
 
     # Evaluate reward performance
@@ -329,6 +359,15 @@ def canonical_puddle_world(
         "st_mode_weights": st_mode_weights.tolist(),
         "st_rewards": [st_r.theta.tolist() for st_r in st_rewards],
         "st_nll": float(tr_nll_history[0]),
+        #
+        # Initial solution evaluation
+        "init_nid": init_nid,
+        "init_anid": init_anid,
+        "init_nll": init_nll,
+        "init_mcf_ile": init_mcf_ile,
+        "init_mcf_ile_flowdict": init_mcf_ile_flowdict,
+        "init_mcf_evd": init_mcf_evd,
+        "init_mcf_evd_flowdict": init_mcf_evd_flowdict,
         #
         # Learned model
         "iterations": int(iterations),
