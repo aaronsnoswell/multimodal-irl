@@ -253,7 +253,7 @@ class MaxEntEMSolver(EMSolver):
             * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
         )
         if self.parallel_executor is None:
-            resp = np.ones((len(rollouts), num_modes))
+            resp = np.ones((len(demonstrations), num_modes))
             for mode_idx, (mode_weight, mode_reward) in enumerate(weights_rewards):
                 resp[:, mode_idx] = proc_one(
                     xtr, phi, mode_weight, mode_reward, demonstrations
