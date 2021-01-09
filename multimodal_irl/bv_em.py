@@ -196,7 +196,13 @@ class EMSolver(abc.ABC):
 class MaxEntEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxEnt IRL"""
 
-    def __init__(self, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None):
+    def __init__(
+        self,
+        minimize_kwargs={},
+        minimize_options={},
+        pre_it=lambda i: None,
+        post_it=lambda i: None,
+    ):
         """C-tor
         
         Args:
@@ -375,7 +381,13 @@ class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
     def __init__(
-        self, boltzman_scale=0.5, qge_tol=1e-3, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None
+        self,
+        boltzman_scale=0.5,
+        qge_tol=1e-3,
+        minimize_kwargs={},
+        minimize_options={},
+        pre_it=lambda i: None,
+        post_it=lambda i: None,
     ):
         """C-tor
         
@@ -609,7 +621,7 @@ def bv_em(
     nll_history = [nll]
     reason = ""
     for iteration in it.count():
-        
+
         # Call user pre-iteration callback
         solver.pre_it(iteration)
 
