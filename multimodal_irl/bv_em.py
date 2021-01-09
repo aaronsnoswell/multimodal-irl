@@ -646,7 +646,7 @@ def bv_em(
         if max_iterations is not None and iteration >= max_iterations - 1:
             reason = "Max iterations reached"
             break
-        
+
         # Call user post-iteration callback
         solver.post_it(iteration)
 
