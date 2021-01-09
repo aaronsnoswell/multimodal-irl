@@ -36,7 +36,13 @@ from mdp_extras import (
 class EMSolver(abc.ABC):
     """An abstract base class for a Multi-Modal IRL EM solver"""
 
-    def __init__(self, minimize_kwargs={}, minimize_options={}, pre_it=lambda i: None, post_it=lambda i: None):
+    def __init__(
+        self,
+        minimize_kwargs={},
+        minimize_options={},
+        pre_it=lambda i: None,
+        post_it=lambda i: None,
+    ):
         """C-tor
         
         Args:
