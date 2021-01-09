@@ -202,6 +202,7 @@ class MaxEntEMSolver(EMSolver):
         minimize_options={},
         pre_it=lambda i: None,
         post_it=lambda i: None,
+        parallel_executor=None,
     ):
         """C-tor
         
@@ -213,6 +214,8 @@ class MaxEntEMSolver(EMSolver):
                 before that iteration commences
             post_it (callable): Optional function accepting the current iteration - called
                 after that iteration ends
+            parallel_executor (concurrent.futures.Executor) optional executor object to
+                parallelize each the E and M steps across modes.
         """
 
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
@@ -221,8 +224,9 @@ class MaxEntEMSolver(EMSolver):
         # previous iteration's reward solutions to use as a super-efficient starting
         # point for the current iteration's reward optimization
         self._prev_rewards = None
+        self.parallel_executor = parallel_executor
 
-    def estep(self, xtr, phi, mode_weights, rewards, rollouts):
+    def estep(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Compute responsibility matrix using MaxEnt reward parameters
         
         Args:
@@ -230,7 +234,7 @@ class MaxEntEMSolver(EMSolver):
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (numpy array): Weights for each behaviour mode
             rewards (list): List of mdp_extras.Linear reward functions, one for each mode
-            rollouts (list): List of (s, a) rollouts
+            demonstrations (list): List of (s, a) rollouts
             
         Returns:
             (numpy array): |D|xK responsibility matrix based on the current reward
@@ -243,11 +247,31 @@ class MaxEntEMSolver(EMSolver):
         if num_modes == 1:
             return np.array([np.ones(len(rollouts))]).T
 
-        resp = np.ones((len(rollouts), num_modes))
-        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
-            resp[:, mode_idx] = mode_weight * np.exp(
-                maxent_path_logprobs(xtr, phi, reward, rollouts)
-            )
+        weights_rewards = zip(mode_weights, rewards)
+        proc_one = (
+            lambda xtr, phi, mode_weight, mode_reward, demonstrations: mode_weight
+            * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
+        )
+        if self.parallel_executor is None:
+            resp = np.ones((len(rollouts), num_modes))
+            for mode_idx, (mode_weight, mode_reward) in enumerate(weights_rewards):
+                resp[:, mode_idx] = proc_one(
+                    xtr, phi, mode_weight, mode_reward, demonstrations
+                )
+        else:
+            # Parallelelize execution over modes
+            tasks = {
+                self.parallel_executor.submit(
+                    proc_one, xtr, phi, mode_weight, mode_reward, demonstrations
+                )
+                for (mode_weight, mode_reward) in weights_rewards
+            }
+            resp = []
+            for future in futures.as_completed(tasks):
+                # Use arg or result here if desired
+                # arg = tasks[future]
+                resp.append(future.result())
+            resp = np.array(resp).T
 
         # Each demonstration gets a mass of 1 to allocate between modes
         resp /= np.sum(resp, axis=1, keepdims=True)
@@ -255,7 +279,7 @@ class MaxEntEMSolver(EMSolver):
         return resp
 
     def mstep(
-        self, xtr, phi, resp, rollouts, reward_range=None,
+        self, xtr, phi, resp, demonstrations, reward_range=None,
     ):
         """Compute reward parameters given responsibility matrix
         
@@ -263,7 +287,7 @@ class MaxEntEMSolver(EMSolver):
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
-            rollouts (list): Demonstration data
+            demonstrations (list): Demonstration data
             
             reward_range (tuple): Optional reward parameter min and max values
     
@@ -273,28 +297,36 @@ class MaxEntEMSolver(EMSolver):
 
         num_rollouts, num_modes = resp.shape
 
-        rewards = []
-        for mode_idx in range(num_modes):
+        method = "BFGS"
+        reward_parameter_bounds = None
+        if reward_range is not None:
+            method = "L-BFGS-B"
+            reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
 
-            rollout_weights = resp[:, mode_idx]
-
+        theta0 = [np.zeros(len(phi)) for i in range(num_modes)]
+        if self._prev_rewards is not None:
             # Because the MaxEnt optimization is convex, we can safely re-use the
             # previous iteration's reward estimates as an efficient starting point
-            if self._prev_rewards is not None:
-                theta0 = self._prev_rewards[mode_idx].theta
-            else:
-                theta0 = np.zeros(len(phi))
+            theta0 = [self._prev_rewards[i].theta for i in range(num_modes)]
 
-            max_path_length = max(*[len(r) for r in rollouts])
+        max_path_length = max(*[len(r) for r in demonstrations])
+
+        def proc_one(
+            xtr,
+            phi,
+            max_path_length,
+            method,
+            demonstrations,
+            reward_parameter_bounds,
+            minimize_options,
+            minimize_kwargs,
+            rollout_weights,
+            theta0,
+        ):
             phi_bar = phi.expectation(
-                rollouts, gamma=xtr.gamma, weights=rollout_weights
+                demonstrations, gamma=xtr.gamma, weights=rollout_weights
             )
 
-            method = "BFGS"
-            reward_parameter_bounds = None
-            if reward_range is not None:
-                method = "L-BFGS-B"
-                reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
             res = minimize(
                 sw_maxent_irl,
                 theta0,
@@ -302,10 +334,50 @@ class MaxEntEMSolver(EMSolver):
                 method=method,
                 jac=True,
                 bounds=reward_parameter_bounds,
-                options=self.minimize_options,
-                **(self.minimize_kwargs),
+                options=minimize_options,
+                **(minimize_kwargs),
             )
-            rewards.append(Linear(res.x[:]))
+            return Linear(res.x[:])
+
+        demo_weights_theta0s = zip(resp.T, theta0)
+        rewards = []
+        if self.parallel_executor is None:
+            for mode_demo_weights, mode_theta0 in demo_weights_theta0s:
+                rewards.append(
+                    proc_one(
+                        xtr,
+                        phi,
+                        max_path_length,
+                        method,
+                        demonstrations,
+                        reward_parameter_bounds,
+                        self.minimize_options,
+                        self.minimize_kwargs,
+                        mode_demo_weights,
+                        mode_theta0,
+                    )
+                )
+        else:
+            tasks = {
+                self.parallel_executor.submit(
+                    proc_one,
+                    xtr,
+                    phi,
+                    max_path_length,
+                    method,
+                    demonstrations,
+                    reward_parameter_bounds,
+                    self.minimize_options,
+                    self.minimize_kwargs,
+                    mode_demo_weights,
+                    mode_theta0,
+                )
+                for mode_demo_weights, mode_theta0 in demo_weights_theta0s
+            }
+            for future in futures.as_completed(tasks):
+                # Use arg or result here if desired
+                # arg = tasks[future]
+                rewards.append(future.result())
 
         # Store current reward estimate for next time
         self._prev_rewards = rewards
