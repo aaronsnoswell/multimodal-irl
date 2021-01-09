@@ -306,7 +306,7 @@ class MaxEntEMSolver(EMSolver):
 
         return rewards
 
-    def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
+    def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Find the average negative log-likelihood of a MaxEnt mixture model
     
         This is the average over all paths of the log-likelihood of each path. That is
@@ -330,86 +330,45 @@ class MaxEntEMSolver(EMSolver):
             phi (): Features object
             mode_weights (list): List of prior probabilities for each mode
             rewards (): reward
-            rollouts (list): List of state-action rollouts
+            demonstrations (list): List of state-action rollouts
     
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
 
-        max_path_length = max([len(r) for r in rollouts])
+        weights_rewards = zip(mode_weights, rewards)
+        proc_one = (
+            lambda xtr, phi, mode_weight, mode_reward, demonstrations: mode_weight
+            * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
+        )
 
-        log_partition_values = []
-        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
-            if isinstance(xtr, DiscreteExplicitExtras):
-                # Process tabular MDP
-                # Catch float overflow as an error - reward magnitude is too large for
-                # exponentiation with this max path length
-                with np.errstate(over="raise"):
-                    alpha_log = nb_backward_pass_log(
-                        xtr.p0s,
-                        max_path_length,
-                        xtr.t_mat,
-                        xtr.gamma,
-                        *reward.structured(xtr, phi),
-                    )
-            elif isinstance(xtr, DiscreteImplicitExtras):
-                # Handle Implicit dynamics MDP
+        path_likelihoods = []
+        if self.parallel_executor is None:
+            for mode_weight, mode_reward in weights_rewards:
+                mode_path_likelihoods = proc_one
+                # Add all finite path likelihoods
+                path_likelihoods.extend(
+                    proc_one(xtr, phi, mode_weight, mode_reward, demonstrations)
+                )
+        else:
+            # Parallelize across modes
+            tasks = {
+                self.parallel_executor.submit(
+                    proc_one, xtr, phi, mode_weight, mode_reward, demonstrations
+                )
+                for (mode_weight, mode_reward) in weights_rewards
+            }
+            for future in futures.as_completed(tasks):
+                # Use arg or result here if desired
+                # arg = tasks[future]
+                path_likelihoods.extend(future.result())
 
-                # Only supports state features - otherwise we run out of memory
-                assert (
-                    phi.type == phi.Type.OBSERVATION
-                ), "For DiscreteImplicit MPDs only state-based rewards are supported"
+        # Drop -inf values
+        path_likelihoods = np.array(path_likelihoods)
+        path_likelihoods = path_likelihoods[np.isfinite(path_likelihoods)]
 
-                # Only supports deterministic transitions
-                assert (
-                    xtr.is_deterministic
-                ), "For DiscreteImplicit MPDs only deterministic dynamics are supported"
-
-                rs = np.array([reward(phi(s)) for s in xtr.states])
-
-                # Catch float overflow as an error - reward magnitude is too large for
-                # exponentiation with this max path length
-                with np.errstate(over="raise"):
-                    # Compute alpha_log
-                    alpha_log = nb_backward_pass_log_deterministic_stateonly(
-                        xtr.p0s,
-                        max_path_length,
-                        xtr.parents_fixedsize,
-                        rs,
-                        gamma=xtr.gamma,
-                        padded=xtr.is_padded,
-                    )
-            else:
-                raise ValueError(f"Unknown MDP class {xtr}")
-
-            log_partition_values.append(
-                log_partition(max_path_length, alpha_log, xtr.is_padded)
-            )
-
-        rollout_lls = []
-        for rollout in rollouts:
-
-            # Get path probability under dynamics
-            q_tau = np.exp(xtr.path_log_probability(rollout))
-
-            # Accumulate likelihood for this rollout across modes
-            rollout_likelihood = 0
-            for mode_idx, (mode_weight, reward, log_partition_value) in enumerate(
-                zip(mode_weights, rewards, log_partition_values)
-            ):
-                # Find MaxEnt likelihood of this rollout under this mode
-                path_prob_me = np.exp(trajectory_reward(xtr, phi, reward, rollout))
-                z_theta = np.exp(log_partition_value)
-                l_rollout_mode = mode_weight * q_tau * path_prob_me / z_theta
-                rollout_likelihood += l_rollout_mode
-            rollout_lls.append(np.log(rollout_likelihood))
-
-        # Find average path negative log likelihood
-        # We filter out paths that have LL of -infinity here
-        # This could, in theory, cause the NLL to be non-monotonic in a future iteration
-        nll = -1 * np.mean(np.array(rollout_lls)[np.isfinite(rollout_lls)])
-
-        return nll
+        # Return average over all paths, modes
+        return -1.0 * np.mean(path_likelihoods)
 
 
 class MaxLikEMSolver(EMSolver):
