@@ -7,8 +7,9 @@ import warnings
 import numpy as np
 import itertools as it
 
-from scipy.optimize import minimize
+from concurrent import futures
 from scipy.stats import dirichlet
+from scipy.optimize import minimize
 
 from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
