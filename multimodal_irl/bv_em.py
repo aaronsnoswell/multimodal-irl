@@ -245,7 +245,7 @@ class MaxEntEMSolver(EMSolver):
 
         # Shortcut for K=1
         if num_modes == 1:
-            return np.array([np.ones(len(rollouts))]).T
+            return np.array([np.ones(len(demonstrations))]).T
 
         weights_rewards = zip(mode_weights, rewards)
         proc_one = (
