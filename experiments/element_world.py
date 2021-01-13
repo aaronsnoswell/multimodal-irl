@@ -4,6 +4,7 @@
 import os
 import tqdm
 import pickle
+import random
 import argparse
 import warnings
 
@@ -140,6 +141,7 @@ def element_world(
             )
         )
     test_gt_resp = np.array(test_gt_resp)
+    test_gt_mixture_weights = np.sum(test_gt_resp, axis=0) / num_demos
 
     def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
         _log.info(f"{_seed}: Iteration {iteration} ended")
