@@ -355,14 +355,28 @@ def element_world_maxent_mixture_ml_path(xtr, phi, demos, mixture_weights, rewar
     for weight, reward in zip(mixture_weights, rewards):
         mode_ml_paths = []
         mode_ml_path_lls = []
-        for path in demos:
-            s1 = path[0][0]
-            sg = path[-1][0]
+
+        # Shortcut - if all paths share a start and end state, don't re-calculate the ML path N times
+        start_states = list(set([demo[0][0] for demo in demos]))
+        end_states = list(set([demo[-1][0] for demo in demos]))
+        if len(start_states) == len(end_states) == 1:
+            # Solve for the ML path once only
+            s1 = start_states[0]
+            sg = end_states[0]
             ml_path, ml_path_ll = maxent_ml_path(
-                xtr, phi, reward, s1, sg, len(path), with_ll=True
+                xtr, phi, reward, s1, sg, len(demos[0]), with_ll=True
             )
-            mode_ml_paths.append(ml_path)
-            mode_ml_path_lls.append(ml_path_ll)
+            mode_ml_paths = [ml_path for _ in range(len(demos))]
+            mode_ml_path_lls = [ml_path_ll for _ in range(len(demos))]
+        else:
+            for path in demos:
+                s1 = path[0][0]
+                sg = path[-1][0]
+                ml_path, ml_path_ll = maxent_ml_path(
+                    xtr, phi, reward, s1, sg, len(path), with_ll=True
+                )
+                mode_ml_paths.append(ml_path)
+                mode_ml_path_lls.append(ml_path_ll)
 
         # Add the log weight for this mixture component
         mode_ml_path_lls = np.array(mode_ml_path_lls) + np.log(weight)
