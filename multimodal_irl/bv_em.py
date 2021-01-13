@@ -97,13 +97,15 @@ class EMSolver(abc.ABC):
         """"""
         raise NotImplementedError
 
-    def init_random(self, phi, num_clusters, reward_range):
+    def init_random(self, phi, num_clusters, reward_range, with_resp=False):
         """Initialize mixture model uniform randomly
         
         Args:
             phi (mdp_extras.FeatureFunction): Feature function
             num_clusters (int): Number of mixture components
             reward_range (tuple): Lower and upper reward function parameter bounds
+            
+            with_resp (bool): Also return responsibility matrix
         
         Returns:
             (numpy array): Initial mixture component weights
@@ -119,10 +121,20 @@ class EMSolver(abc.ABC):
             for _ in range(num_clusters)
         ]
 
-        return mode_weights, rewards
+        if not with_resp:
+            return mode_weights, rewards
+        else:
+            raise NotImplementedError
 
     def init_kmeans(
-        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
+        self,
+        xtr,
+        phi,
+        rollouts,
+        num_clusters,
+        reward_range,
+        num_restarts=5000,
+        with_resp=False,
     ):
         """Initialize mixture model with KMeans (hard clustering)
         
@@ -134,6 +146,7 @@ class EMSolver(abc.ABC):
             reward_range (tuple): Lower and upper reward function parameter bounds
             
             num_restarts (int): Number of random clusterings to perform
+            with_resp (bool): Also return responsibility matrix
         
         Returns:
             (numpy array): Initial mixture component weights
@@ -156,10 +169,20 @@ class EMSolver(abc.ABC):
             xtr, phi, soft_initial_clusters, rollouts, reward_range=reward_range
         )
 
-        return mode_weights, rewards
+        if not with_resp:
+            return mode_weights, rewards
+        else:
+            return soft_initial_clusters, mode_weights, rewards
 
     def init_gmm(
-        self, xtr, phi, rollouts, num_clusters, reward_range, num_restarts=5000
+        self,
+        xtr,
+        phi,
+        rollouts,
+        num_clusters,
+        reward_range,
+        num_restarts=5000,
+        with_resp=False,
     ):
         """Initialize mixture model with GMM (soft clustering)
         
@@ -192,7 +215,10 @@ class EMSolver(abc.ABC):
             xtr, phi, soft_initial_clusters, rollouts, reward_range=reward_range
         )
 
-        return mode_weights, rewards
+        if not with_resp:
+            return mode_weights, rewards
+        else:
+            return soft_initial_clusters, mode_weights, rewards
 
 
 class MaxEntEMSolver(EMSolver):
