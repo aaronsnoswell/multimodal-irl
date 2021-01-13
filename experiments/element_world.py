@@ -16,8 +16,13 @@ from pprint import pprint
 from datetime import datetime
 from concurrent import futures
 
-from experiments.utils import replicate_config, get_num_workers, mongo_config
-from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em, MeanOnlySolver
+from experiments.utils import (
+    replicate_config,
+    get_num_workers,
+    mongo_config,
+    geometric_distribution,
+)
+from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em, MeanOnlyEMSolver
 
 from mdp_extras import (
     OptimalPolicy,
@@ -43,7 +48,8 @@ from unimodal_irl.metrics import ile_evd
 def base_config():
     """Define base experimental parameters here"""
     num_elements = 4
-    num_demos_per_element = 25
+    num_demos = 100
+    demo_skew = 0.0
     num_clusters = 4
     wind = 0.1
     algorithm = "MaxEnt"
@@ -61,7 +67,8 @@ def base_config():
 
 def element_world(
     num_elements,
-    num_demos_per_element,
+    num_demos,
+    demo_skew,
     num_clusters,
     wind,
     algorithm,
@@ -81,39 +88,55 @@ def element_world(
     """ElementWorld Sacred Experiment"""
 
     # Construct EW
+    _log.info(f"{_seed}: Preparing environment...")
     env = ElementWorldEnv(
         width=width, height=height, num_elements=num_elements, wind=wind, gamma=gamma
     )
     xtr, phi, gt_rewards = element_world_extras(env)
 
+    _log.info(f"{_seed}: Generating rollouts...")
+    mode_proportions = geometric_distribution(demo_skew, num_elements)
+    demos_per_mode = np.floor(mode_proportions * num_demos)
+
+    # Ensure every mode has at least 1 demo
+    demos_per_mode = np.maximum(demos_per_mode, 1)
+
+    # Ensure correct number of demos are present
+    while np.sum(demos_per_mode) > num_demos:
+        demos_per_mode[np.argmax(demos_per_mode)] -= 1
+    while np.sum(demos_per_mode) < num_demos:
+        demos_per_mode[np.argmin(demos_per_mode)] += 1
+
+    # Convert to int
+    demos_per_mode = demos_per_mode.astype(int)
+
     # Solve, get train dataset
     train_demos = []
     train_gt_resp = []
-    train_gt_mixture_weights = np.ones(num_elements) / num_elements
-    for ri, reward in enumerate(gt_rewards):
+    for ri, (reward, num_element_demos) in enumerate(zip(gt_rewards, demos_per_mode)):
         resp_row = np.zeros(num_elements)
         resp_row[ri] = 1.0
-        for _ in range(num_demos_per_element):
+        for _ in range(num_element_demos):
             train_gt_resp.append(resp_row)
         train_demos.extend(
             OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
-                env, num_demos_per_element, max_path_length=max_demonstration_length
+                env, num_element_demos, max_path_length=max_demonstration_length
             )
         )
     train_gt_resp = np.array(train_gt_resp)
+    train_gt_mixture_weights = np.sum(train_gt_resp, axis=0) / num_demos
 
     # Solve, get test dataset
     test_demos = []
     test_gt_resp = []
-    test_gt_mixture_weights = np.ones(num_elements) / num_elements
-    for ri, reward in enumerate(gt_rewards):
+    for ri, (reward, num_element_demos) in enumerate(zip(gt_rewards, demos_per_mode)):
         resp_row = np.zeros(num_elements)
         resp_row[ri] = 1.0
-        for _ in range(num_demos_per_element):
+        for _ in range(num_element_demos):
             test_gt_resp.append(resp_row)
         test_demos.extend(
             OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
-                env, num_demos_per_element, max_path_length=max_demonstration_length
+                env, num_element_demos, max_path_length=max_demonstration_length
             )
         )
     test_gt_resp = np.array(test_gt_resp)
@@ -135,7 +158,7 @@ def element_world(
         train_demos_p = train_demos
         test_demos_p = test_demos
     elif algorithm == "MeanOnly":
-        solver = MeanOnlySolver(post_it=post_em_iteration)
+        solver = MeanOnlyEMSolver(post_it=post_em_iteration)
         xtr_p = xtr
         train_demos_p = train_demos
         test_demos_p = test_demos
@@ -391,11 +414,19 @@ def main():
     )
 
     parser.add_argument(
-        "--num_demos_per_element",
+        "--num_demos",
         required=False,
-        default=25,
+        default=100,
         type=int,
-        help="Number of demonstrations per element to give to MI-IRL algorithm",
+        help="Total number of demonstrations to give MI-IRL algorithm",
+    )
+
+    parser.add_argument(
+        "--demo_skew",
+        required=False,
+        default=0.0,
+        type=float,
+        help="Geometric distribution skew for allocating demonstrations to ground truth modes - 0.0 results in uniform distribution, 1.0 results in a very skewed distribution",
     )
 
     parser.add_argument(
@@ -453,7 +484,8 @@ def main():
 
     config_updates = {
         "num_elements": args.num_elements,
-        "num_demos_per_element": args.num_demos_per_element,
+        "num_demos": args.num_demos,
+        "demo_skew": args.demo_skew,
         "num_clusters": args.num_clusters,
         "wind": args.wind,
         "algorithm": args.algorithm,
