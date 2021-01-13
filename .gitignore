@@ -137,4 +137,7 @@ dmypy.json
 .idea/
 
 manuscript/
-**/experiments/
+experiments/old-experiments/
+experiments/*.ipynb
+experiments/*.pdf
+experiments/*.xls*
