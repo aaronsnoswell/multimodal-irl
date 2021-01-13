@@ -51,7 +51,8 @@ class EMSolver(abc.ABC):
                 'options' parameter
             pre_it (callable): Optional function accepting the current iteration - called
                 before that iteration commences
-            post_it (callable): Optional function accepting the current iteration - called
+            post_it (callable): Optional function accepting the solver, current iteration,
+                responsibility matrix, mode weights, and reward objects - called
                 after that iteration ends
         """
         self.minimize_kwargs = minimize_kwargs
@@ -170,6 +171,7 @@ class EMSolver(abc.ABC):
             reward_range (tuple): Lower and upper reward function parameter bounds
             
             num_restarts (int): Number of random clusterings to perform
+            with_resp (bool): Also return responsibility matrix
         
         Returns:
             (numpy array): Initial mixture component weights
@@ -212,7 +214,8 @@ class MaxEntEMSolver(EMSolver):
                 'options' parameter
             pre_it (callable): Optional function accepting the current iteration - called
                 before that iteration commences
-            post_it (callable): Optional function accepting the current iteration - called
+            post_it (callable): Optional function accepting the solver, current iteration,
+                responsibility matrix, mode weights, and reward objects - called
                 after that iteration ends
             parallel_executor (concurrent.futures.Executor) optional executor object to
                 parallelize each the E and M steps across modes.
@@ -471,7 +474,8 @@ class MaxLikEMSolver(EMSolver):
                 'options' parameter
             pre_it (callable): Optional function accepting the current iteration - called
                 before that iteration commences
-            post_it (callable): Optional function accepting the current iteration - called
+            post_it (callable): Optional function accepting the solver, current iteration,
+                responsibility matrix, mode weights, and reward objects - called
                 after that iteration ends
         """
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
@@ -711,6 +715,9 @@ def bv_em(
         nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
         nll_history.append(nll)
 
+        # Call user post-iteration callback
+        solver.post_it(solver, iteration, resp, mode_weights, rewards, nll)
+
         # Edge case for only one cluster
         if num_modes == 1:
             reason = "Only one cluster to learn"
@@ -730,9 +737,6 @@ def bv_em(
         if max_iterations is not None and iteration >= max_iterations - 1:
             reason = "Max iterations reached"
             break
-
-        # Call user post-iteration callback
-        solver.post_it(iteration)
 
     return (
         iteration + 1,
