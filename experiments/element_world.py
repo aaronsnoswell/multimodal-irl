@@ -1,0 +1,491 @@
+"""ElementWorld experiment script
+
+"""
+import os
+import tqdm
+import pickle
+import argparse
+import warnings
+
+import numpy as np
+
+from sacred import Experiment
+from sacred.observers import MongoObserver
+
+from pprint import pprint
+from datetime import datetime
+from concurrent import futures
+
+from experiments.utils import replicate_config, get_num_workers, mongo_config
+from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em, MeanOnlySolver
+
+from mdp_extras import (
+    OptimalPolicy,
+    padding_trick,
+    q_vi,
+    PaddedMDPWarning,
+)
+
+from multimodal_irl.envs.element_world import (
+    ElementWorldEnv,
+    element_world_extras,
+    element_world_maxent_mixture_ml_path,
+    percent_distance_missed_metric,
+)
+from multimodal_irl.metrics import (
+    normalized_information_distance,
+    adjusted_normalized_information_distance,
+    min_cost_flow_error_metric,
+)
+from unimodal_irl.metrics import ile_evd
+
+
+def base_config():
+    """Define base experimental parameters here"""
+    num_elements = 4
+    num_demos_per_element = 25
+    num_clusters = 4
+    wind = 0.1
+    algorithm = "MaxEnt"
+    initialisation = "Random"
+    width = 4
+    height = 4
+    gamma = 0.99
+    max_demonstration_length = 50
+    reward_range = (-10.0, 0.0)
+    num_init_restarts = 5000
+    em_nll_tolerance = 0.0
+    max_iterations = 10
+    replicate = 0
+
+
+def element_world(
+    num_elements,
+    num_demos_per_element,
+    num_clusters,
+    wind,
+    algorithm,
+    initialisation,
+    width,
+    height,
+    gamma,
+    max_demonstration_length,
+    reward_range,
+    num_init_restarts,
+    em_nll_tolerance,
+    max_iterations,
+    _log,
+    _seed,
+    _run,
+):
+    """ElementWorld Sacred Experiment"""
+
+    # Construct EW
+    env = ElementWorldEnv(
+        width=width, height=height, num_elements=num_elements, wind=wind, gamma=gamma
+    )
+    xtr, phi, gt_rewards = element_world_extras(env)
+
+    # Solve, get train dataset
+    train_demos = []
+    train_gt_resp = []
+    train_gt_mixture_weights = np.ones(num_elements) / num_elements
+    for ri, reward in enumerate(gt_rewards):
+        resp_row = np.zeros(num_elements)
+        resp_row[ri] = 1.0
+        for _ in range(num_demos_per_element):
+            train_gt_resp.append(resp_row)
+        train_demos.extend(
+            OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
+                env, num_demos_per_element, max_path_length=max_demonstration_length
+            )
+        )
+    train_gt_resp = np.array(train_gt_resp)
+
+    # Solve, get test dataset
+    test_demos = []
+    test_gt_resp = []
+    test_gt_mixture_weights = np.ones(num_elements) / num_elements
+    for ri, reward in enumerate(gt_rewards):
+        resp_row = np.zeros(num_elements)
+        resp_row[ri] = 1.0
+        for _ in range(num_demos_per_element):
+            test_gt_resp.append(resp_row)
+        test_demos.extend(
+            OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
+                env, num_demos_per_element, max_path_length=max_demonstration_length
+            )
+        )
+    test_gt_resp = np.array(test_gt_resp)
+
+    def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
+        _log.info(f"{_seed}: Iteration {iteration} ended")
+        _run.log_scalar("training.nll", nll)
+
+        # TODO ajs evaluate model here?
+
+    # Initialize solver
+    if algorithm == "MaxEnt":
+        solver = MaxEntEMSolver(post_it=post_em_iteration)
+        xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+        _, test_demos_p = padding_trick(xtr, test_demos)
+    elif algorithm == "MaxLik":
+        solver = MaxLikEMSolver(post_it=post_em_iteration)
+        xtr_p = xtr
+        train_demos_p = train_demos
+        test_demos_p = test_demos
+    elif algorithm == "MeanOnly":
+        solver = MeanOnlySolver(post_it=post_em_iteration)
+        xtr_p = xtr
+        train_demos_p = train_demos
+        test_demos_p = test_demos
+    else:
+        raise ValueError
+
+    # Initialize Mixture
+    t0 = datetime.now()
+    if initialisation == "Random":
+        # Initialize uniformly at random
+        init_mode_weights, init_rewards = solver.init_random(
+            phi, num_clusters, reward_range
+        )
+    elif initialisation == "KMeans":
+        # Initialize with K-Means (hard) clustering
+        init_mode_weights, init_rewards = solver.init_kmeans(
+            xtr_p, phi, train_demos_p, num_clusters, reward_range, num_init_restarts
+        )
+    elif initialisation == "GMM":
+        # Initialize with GMM (soft) clustering
+        init_mode_weights, init_rewards = solver.init_gmm(
+            xtr_p, phi, train_demos_p, num_clusters, reward_range, num_init_restarts
+        )
+    elif initialisation == "Supervised":
+        # We always have uniform clusters in supervised experiments
+        assert num_clusters == num_elements
+        # TODO ajs 12/Jan/2020 Skip BV-EM training and just evaluate the mixture
+        raise NotImplementedError
+    else:
+        raise ValueError
+
+    # Get initial responsibility matrix
+    init_resp = solver.estep(xtr_p, phi, init_mode_weights, init_rewards, test_demos)
+
+    # Evaluate initial mixture
+    _log.info(f"{_seed}: Evaluating initial solution...")
+    init_eval = element_world_eval(
+        xtr,
+        phi,
+        test_demos,
+        test_gt_resp,
+        test_gt_mixture_weights,
+        gt_rewards,
+        init_resp,
+        init_mode_weights,
+        init_rewards,
+        solver,
+    )
+
+    # MI-IRL algorithm
+    _log.info(f"{_seed}: BV-EM Loop")
+    (
+        train_iterations,
+        resp_history,
+        mode_weights_history,
+        rewards_history,
+        nll_history,
+        train_reason,
+    ) = bv_em(
+        solver,
+        xtr_p,
+        phi,
+        test_demos_p,
+        num_clusters,
+        reward_range,
+        mode_weights=init_mode_weights,
+        rewards=init_rewards,
+        tolerance=em_nll_tolerance,
+        max_iterations=max_iterations,
+    )
+    t1 = datetime.now()
+    learn_resp = resp_history[-1]
+    learn_mode_weights = mode_weights_history[-1]
+    learn_rewards = rewards_history[-1]
+    learn_nll = nll_history[-1]
+    train_duration = (t1 - t0).total_seconds()
+
+    # Evaluate final mixture
+    _log.info(f"{_seed}: Evaluating final mixture")
+    learn_eval = element_world_eval(
+        xtr,
+        phi,
+        test_demos,
+        test_gt_resp,
+        test_gt_mixture_weights,
+        gt_rewards,
+        learn_resp,
+        learn_mode_weights,
+        learn_rewards,
+        solver,
+    )
+
+    # Dump experimental results to artifact
+    _log.info(f"{_seed}: Done...")
+    result_fname = f"{_seed}.result"
+    with open(result_fname, "wb") as file:
+        pickle.dump(
+            {
+                # Initial soln
+                "init_resp": init_resp.tolist(),
+                "init_mode_weights": init_mode_weights.tolist(),
+                "init_rewards": [np.array(r.theta).tolist() for r in init_rewards],
+                "init_eval": init_eval,
+                # Final soln
+                "learn_resp": learn_resp.tolist(),
+                "learn_mode_weights": learn_mode_weights.tolist(),
+                "learn_rewards": [np.array(r.theta).tolist() for r in learn_rewards],
+                "learn_eval": learn_eval,
+                # Training details
+                "train_iterations": train_iterations,
+                "train_reason": train_reason,
+                "train_duration": train_duration,
+            },
+            file,
+        )
+    _run.add_artifact(result_fname)
+    os.remove(result_fname)
+
+    _log.info(f"{_seed}: Done")
+
+    return float(learn_nll)
+
+
+def element_world_eval(
+    xtr,
+    phi,
+    demos,
+    gt_resp,
+    gt_mixture_weights,
+    gt_rewards,
+    resp,
+    mixture_weights,
+    rewards,
+    solver,
+):
+    """Evaluate a ElementWorld mixture model
+    
+    TODO ajs 13/Jan/2020 Optimize this function - it's sloooow!
+    
+    Args:
+        TODO
+    
+    Returns:
+        TODO
+    """
+    gt_num_clusters = len(gt_mixture_weights)
+    num_clusters = len(mixture_weights)
+
+    xtr_p, demos_p = padding_trick(xtr, demos)
+
+    # Measure NLL
+    nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
+
+    # Measure clustering performance
+    nid = normalized_information_distance(gt_resp, resp)
+    anid = adjusted_normalized_information_distance(gt_resp, resp)
+
+    # Compute ILE, EVD matrices
+    ile_mat = np.zeros((num_clusters, gt_num_clusters))
+    evd_mat = np.zeros((num_clusters, gt_num_clusters))
+    for learned_mode_idx in range(num_clusters):
+        for gt_mode_idx in range(gt_num_clusters):
+            ile, evd = ile_evd(
+                xtr, phi, gt_rewards[gt_mode_idx], rewards[learned_mode_idx],
+            )
+            ile_mat[learned_mode_idx, gt_mode_idx] = ile
+            evd_mat[learned_mode_idx, gt_mode_idx] = evd
+
+    # Measure reward performance
+    mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
+        mixture_weights, gt_mixture_weights, ile_mat
+    )
+    mcf_evd, mcf_evd_flowdict = min_cost_flow_error_metric(
+        mixture_weights, gt_mixture_weights, evd_mat
+    )
+
+    ml_paths = []
+    pdms = []
+    fds = []
+    if isinstance(solver, MaxEntEMSolver):
+        # Get ML paths from MaxEnt mixture
+        ml_paths = element_world_maxent_mixture_ml_path(
+            xtr, phi, demos, mixture_weights, rewards
+        )
+
+        # Measure % Distance Missed of ML paths
+        pdms = [
+            percent_distance_missed_metric(ml_path, gt_path)
+            for (gt_path, ml_path) in zip(demos, ml_paths)
+        ]
+
+        # Measure feature distance of ML paths
+        fds = [
+            phi.feature_distance(gt_path, ml_path)
+            for (gt_path, ml_path) in zip(demos, ml_paths)
+        ]
+
+    return dict(
+        nll=nll,
+        nid=nid,
+        anid=anid,
+        mcf_ile=mcf_ile,
+        mcf_ile_flowdict=mcf_ile_flowdict,
+        mcf_evd=mcf_evd,
+        mcf_evd_flowdict=mcf_evd_flowdict,
+        pdms=pdms,
+        fds=fds,
+    )
+
+
+def run(config_updates, mongodb_url="localhost:27017"):
+    """Run a single experiment with the given configuration
+    
+    Args:
+        config_updates (dict): Configuration updates
+        mongodb_url (str): MongoDB URL, or None if no Mongo observer should be used for
+            this run
+    """
+
+    # Dynamically bind experiment config and main function
+    ex = Experiment()
+    ex.config(base_config)
+    ex.main(element_world)
+
+    # Attach MongoDB observer if necessary
+    if mongodb_url is not None and not ex.observers:
+        ex.observers.append(MongoObserver(url=mongodb_url))
+
+    # Suppress warnings about padded MPDs
+    with warnings.catch_warnings():
+        warnings.filterwarnings(action="ignore", category=PaddedMDPWarning)
+
+        # Run the experiment
+        run = ex.run(
+            config_updates=config_updates
+        )  # , options={"--loglevel": "ERROR"})
+
+    # Return the result
+    return run.result
+
+
+def main():
+    """Main function"""
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--num_elements",
+        required=False,
+        default=4,
+        type=int,
+        help="Number of elements (ground truth clusters) to use",
+    )
+
+    parser.add_argument(
+        "--num_demos_per_element",
+        required=False,
+        default=25,
+        type=int,
+        help="Number of demonstrations per element to give to MI-IRL algorithm",
+    )
+
+    parser.add_argument(
+        "--num_clusters",
+        required=False,
+        default=4,
+        type=int,
+        help="Number of clusters to learn",
+    )
+
+    parser.add_argument(
+        "--wind",
+        required=False,
+        default=0.1,
+        type=float,
+        help="Random action probability",
+    )
+
+    parser.add_argument(
+        "--algorithm",
+        required=False,
+        default="MaxEnt",
+        type=str,
+        choices=("MaxEnt", "MaxLik", "MeanOnly"),
+        help="IRL model + algorithm to use in EM inner loop",
+    )
+
+    parser.add_argument(
+        "--initialisation",
+        required=False,
+        type=str,
+        default="Random",
+        choices=("Random", "KMeans", "GMM", "Supervised"),
+        help="Cluster initialisation method to use",
+    )
+
+    parser.add_argument(
+        "--num_replicates",
+        required=False,
+        type=int,
+        default=100,
+        help="Number of replicates to perform",
+    )
+
+    parser.add_argument(
+        "--num_workers",
+        required=False,
+        default=None,
+        type=int,
+        help="Number of workers to use - if not provided, will be inferred from system and workload",
+    )
+
+    args = parser.parse_args()
+    print("META: Arguments:", args, flush=True)
+
+    config_updates = {
+        "num_elements": args.num_elements,
+        "num_demos_per_element": args.num_demos_per_element,
+        "num_clusters": args.num_clusters,
+        "wind": args.wind,
+        "algorithm": args.algorithm,
+        "initialisation": args.initialisation,
+    }
+
+    print("META: Configuration: ")
+    pprint(config_updates)
+
+    configs = replicate_config(config_updates, args.num_replicates)
+    num_workers = get_num_workers(len(configs), args.num_workers)
+    print(
+        f"META: Distributing {args.num_replicates} replicate(s) over {num_workers} workers"
+    )
+
+    mongodb_url = None
+    # Read MongoDB URL from config file, if it exists
+    mongodb_url = mongo_config()
+    print(f"META: MongoDB Server URL: {mongodb_url}")
+
+    # Parallel loop
+    with tqdm.tqdm(total=len(configs)) as pbar:
+        with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+            tasks = {executor.submit(run, config, mongodb_url) for config in configs}
+            for future in futures.as_completed(tasks):
+                # arg = tasks[future]; result = future.result()
+                pbar.update(1)
+
+    # # Debugging loop
+    # for config in tqdm.tqdm(configs):
+    #     run(config, mongodb_url)
+
+
+if __name__ == "__main__":
+    main()
