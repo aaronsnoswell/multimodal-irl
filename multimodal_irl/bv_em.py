@@ -452,6 +452,34 @@ class MaxEntEMSolver(EMSolver):
         return -1.0 * np.mean(path_likelihoods)
 
 
+class MeanOnlyEMSolver(MaxEntEMSolver):
+    """Approximates a MaxEnt solver by picking the feature expectation at every mstep"""
+
+    def mstep(
+        self, xtr, phi, resp, demonstrations, reward_range=None,
+    ):
+        """Compute reward parameters given responsibility matrix
+        
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            demonstrations (list): Demonstration data
+            
+            reward_range (tuple): Optional reward parameter min and max values
+    
+        Returns:
+            (list): List of Linear reward functions
+        """
+        rewards = []
+        for mode_demo_weights in resp.T:
+            phi_bar = phi.expectation(
+                demonstrations, gamma=xtr.gamma, weights=mode_demo_weights
+            )
+            rewards.append(Linear(phi_bar))
+        return rewards
+
+
 class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
