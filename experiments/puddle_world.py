@@ -419,49 +419,6 @@ def run(config, mongodb_url="localhost:27017"):
     return run.result
 
 
-def status():
-    """Check the MongoDB database for the remaining experiments that need doing"""
-
-    # Open connection
-    client = pymongo.MongoClient("mongodb://localhost:27017")
-
-    # Get Sacred DB
-    db = client["sacred"]
-
-    # Get experimental runs collection
-    runs = db.get_collection("runs")
-
-    # Query for the set of configs in the database
-    configs = runs.find({"status": {"$eq": "COMPLETED"}}, {"config": 1, "status": 1})
-
-    # Slice out config objects
-    configs = [c["config"] for c in configs]
-
-    config_max_replicates = {}
-    for c in configs:
-        c2 = c.copy()
-        del c2["seed"]
-        del c2["replicate"]
-        plain_config_str = str(c2)
-        replicate_num = c["replicate"]
-        cur_replicate_val = config_max_replicates.get(plain_config_str, 0)
-        config_max_replicates[plain_config_str] = max(cur_replicate_val, replicate_num)
-
-    vals = []
-    for config_str, max_replicates in config_max_replicates.items():
-        _config = ast.literal_eval(config_str)
-        if max_replicates < 99:
-            _config["Status"] = "RUNNING"
-        else:
-            _config["Status"] = "COMPLETED"
-        _config["Max Replicates"] = max_replicates + 1
-        vals.append(_config)
-
-    df = pd.DataFrame(vals)
-
-    return df
-
-
 def main():
     """Main"""
 
