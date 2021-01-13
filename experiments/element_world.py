@@ -321,10 +321,16 @@ def element_world_eval(
     # Compute ILE, EVD matrices
     ile_mat = np.zeros((num_clusters, gt_num_clusters))
     evd_mat = np.zeros((num_clusters, gt_num_clusters))
-    for learned_mode_idx in range(num_clusters):
-        for gt_mode_idx in range(gt_num_clusters):
-            ile, evd = ile_evd(
-                xtr, phi, gt_rewards[gt_mode_idx], rewards[learned_mode_idx],
+    for gt_mode_idx in range(gt_num_clusters):
+        gt_state_value_vector = None
+        for learned_mode_idx in range(num_clusters):
+            ile, evd, gt_state_value_vector = ile_evd(
+                xtr,
+                phi,
+                gt_rewards[gt_mode_idx],
+                rewards[learned_mode_idx],
+                ret_gt_value=True,
+                gt_policy_value=gt_state_value_vector,
             )
             ile_mat[learned_mode_idx, gt_mode_idx] = ile
             evd_mat[learned_mode_idx, gt_mode_idx] = evd
