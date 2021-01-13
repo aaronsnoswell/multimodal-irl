@@ -136,3 +136,33 @@ def gt_responsibility_matrix(k, rpm):
         (numpy array): Block-diagonal ground truth responsibility matrix
     """
     return np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
+
+
+def geometric_distribution(p, num_points):
+    """Compute a normalized geometric distribution
+    
+    Args:
+        p (float): Geometric distribution parameter on range [0, 1]. 0 asymptotically
+            approaches a uniform distribution, 1.0 approaches a point-mass distribution
+            at the first point.
+        num_points (int): Size of the support for this distribution
+    
+    Returns:
+        (numpy array): Normalized probability of each of the num_points.
+    """
+
+    if p == 0.0:
+        # Handle asymptotic edge case: p=0 is a uniform distribution
+        return np.ones(num_points) / num_points
+
+    # Prepare discrete X-axis samples
+    x = np.arange(1, num_points + 1)
+
+    # Apply geometric distribution to those points
+    geom = lambda x: ((1 - p) ** (x - 1)) * p
+    y = geom(x)
+
+    # Normalize the distribution
+    y /= np.sum(y)
+
+    return y
