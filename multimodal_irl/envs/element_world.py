@@ -413,61 +413,7 @@ def percent_distance_missed_metric(path_l, path_gt):
 
 def main():
     """Main function"""
-    import matplotlib.pyplot as plt
-
-    from pprint import pprint
-
-    import tqdm
-
-    from mdp_extras import q_vi, q2v
-
-    from unimodal_irl.sw_maxent_irl import maxent_ml_path
-
-    num_elements = 4
-    size = 10
-    env = ElementWorldEnv(
-        width=size, height=size, num_elements=num_elements, wind=0.2, gamma=0.99
-    )
-    xtr, phi, rewards = element_world_extras(env)
-    print(env.render())
-
-    ml_path = maxent_ml_path(xtr, phi, rewards[0], 0, len(xtr.states) - 1, size * 3)
-    print(ml_path)
-    print([s for (s, a) in ml_path])
-
-    # ml_path = maxent_ml_path(xtr, phi, rewards[1], 0, len(xtr.states) - 1, 9)
-    # print(ml_path)
-
-    print("Here")
-
-    # fig, axes = plt.subplots(num_elements, 2, sharex=True, sharey=True)
-    # plt.set_cmap("Reds_r")
-    # for axes_row, reward in zip(axes, rewards):
-    #     rs = reward.structured(xtr, phi)[0]
-    #     q_star = q_vi(xtr, phi, reward)
-    #     v_star = q2v(q_star)
-    #     pi_star = OptimalPolicy(q_star)
-    #
-    #     # s = env.reset()
-    #     # done = False
-    #     # while not done:
-    #     #     a, _ = pi_star.predict(s)
-    #     #     s2, r, done, _ = env.step(a)
-    #     #     print(env.render())
-    #     #     s = s2
-    #
-    #     demo_star = pi_star.get_rollouts(env, 1000, max_path_length=50)
-    #     print(phi.expectation(demo_star, gamma=xtr.gamma))
-    #
-    #     # plt.sca(axes_row[0])
-    #     # plt.imshow(rs.reshape(env._height, env._width), vmin=-10, vmax=0)
-    #     # plt.title("Reward")
-    #     #
-    #     # plt.sca(axes_row[1])
-    #     # plt.imshow(v_star.reshape(env._height, env._width))
-    #     # plt.title("Value Fn")
-
-    # plt.show()
+    pass
 
 
 if __name__ == "__main__":
