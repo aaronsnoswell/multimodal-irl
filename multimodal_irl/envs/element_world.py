@@ -335,13 +335,18 @@ def element_world_extras(env):
     return xtr, phi, rewards
 
 
-def element_world_maxent_mixture_ml_path(xtr, phi, demos, mixture_weights, rewards):
+def element_world_mixture_ml_path(
+    xtr, phi, demos, get_ml_path, mixture_weights, rewards
+):
     """Find the ML path for an ElementWorld MaxEnt mixture
     
     Args:
         xtr (DiscreteEplicitExtras): MDP extras
         phi (FeatureFunction): Feature function
         demos (list): List of demonstration paths
+        get_ml_path (callable): Function taking xtr, phi, Linear, start state, goal state,
+            length of longest possible path, and retuning the ML path under the probabilistic
+            model with that reward.
         mixture_weights (numpy array): Mixture component weights
         rewards (list): List of Linear rewards
     
@@ -363,13 +368,13 @@ def element_world_maxent_mixture_ml_path(xtr, phi, demos, mixture_weights, rewar
             # Solve for the ML path once only
             s1 = start_states[0]
             sg = end_states[0]
-            ml_path = maxent_ml_path(xtr, phi, reward, s1, sg, len(demos[0]))
+            ml_path = get_ml_path(xtr, phi, reward, s1, sg, len(demos[0]))
             mode_ml_paths = [ml_path for _ in range(len(demos))]
         else:
             for path in demos:
                 s1 = path[0][0]
                 sg = path[-1][0]
-                ml_path = maxent_ml_path(xtr, phi, reward, s1, sg, len(path))
+                ml_path = get_ml_path(xtr, phi, reward, s1, sg, len(path))
                 mode_ml_paths.append(ml_path)
 
         # Compute log probability of the ML paths under this mode, for this mode

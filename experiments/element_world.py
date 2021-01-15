@@ -17,6 +17,8 @@ from pprint import pprint
 from datetime import datetime
 from concurrent import futures
 
+from unimodal_irl import maxent_ml_path, maxlikelihood_ml_path
+
 from experiments.utils import (
     replicate_config,
     get_num_workers,
@@ -35,8 +37,8 @@ from mdp_extras import (
 from multimodal_irl.envs.element_world import (
     ElementWorldEnv,
     element_world_extras,
-    element_world_maxent_mixture_ml_path,
     percent_distance_missed_metric,
+    element_world_mixture_ml_path,
 )
 from multimodal_irl.metrics import (
     normalized_information_distance,
@@ -373,21 +375,28 @@ def element_world_eval(
     fds = []
     if isinstance(solver, MaxEntEMSolver):
         # Get ML paths from MaxEnt mixture
-        ml_paths = element_world_maxent_mixture_ml_path(
-            xtr, phi, demos, mixture_weights, rewards
+        ml_paths = element_world_mixture_ml_path(
+            xtr, phi, demos, maxent_ml_path, mixture_weights, rewards
         )
+    elif isinstance(solver, MaxLikEMSolver):
+        # Get ML paths from MaxEnt mixture
+        ml_paths = element_world_mixture_ml_path(
+            xtr, phi, demos, maxlikelihood_ml_path, mixture_weights, rewards
+        )
+    else:
+        raise ValueError
 
-        # Measure % Distance Missed of ML paths
-        pdms = [
-            percent_distance_missed_metric(ml_path, gt_path)
-            for (gt_path, ml_path) in zip(demos, ml_paths)
-        ]
+    # Measure % Distance Missed of ML paths
+    pdms = [
+        percent_distance_missed_metric(ml_path, gt_path)
+        for (gt_path, ml_path) in zip(demos, ml_paths)
+    ]
 
-        # Measure feature distance of ML paths
-        fds = [
-            phi.feature_distance(gt_path, ml_path)
-            for (gt_path, ml_path) in zip(demos, ml_paths)
-        ]
+    # Measure feature distance of ML paths
+    fds = [
+        phi.feature_distance(gt_path, ml_path)
+        for (gt_path, ml_path) in zip(demos, ml_paths)
+    ]
 
     return dict(
         nll=nll,
