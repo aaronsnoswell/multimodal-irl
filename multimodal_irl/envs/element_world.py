@@ -12,9 +12,10 @@ from mdp_extras import (
     Linear,
     OptimalPolicy,
     nonoverlapping_shared_subsequences,
+    padding_trick,
 )
 from mdp_extras.utils import compute_parents_children
-from unimodal_irl.sw_maxent_irl import maxent_ml_path
+from unimodal_irl.sw_maxent_irl import maxent_ml_path, maxent_path_logprobs
 
 
 class ElementWorldEnv(gym.Env):
@@ -51,12 +52,12 @@ class ElementWorldEnv(gym.Env):
 
     def __init__(
         self,
-        width=5,
-        height=5,
-        num_elements=5,
+        width=6,
+        height=6,
+        num_elements=4,
         target_element=0,
-        wind=0.2,
-        gamma=0.935,
+        wind=0.1,
+        gamma=0.99,
         seed=None,
     ):
         """C-tor
@@ -354,7 +355,6 @@ def element_world_maxent_mixture_ml_path(xtr, phi, demos, mixture_weights, rewar
     mixture_path_lls = []
     for weight, reward in zip(mixture_weights, rewards):
         mode_ml_paths = []
-        mode_ml_path_lls = []
 
         # Shortcut - if all paths share a start and end state, don't re-calculate the ML path N times
         start_states = list(set([demo[0][0] for demo in demos]))
@@ -363,23 +363,21 @@ def element_world_maxent_mixture_ml_path(xtr, phi, demos, mixture_weights, rewar
             # Solve for the ML path once only
             s1 = start_states[0]
             sg = end_states[0]
-            ml_path, ml_path_ll = maxent_ml_path(
-                xtr, phi, reward, s1, sg, len(demos[0]), with_ll=True
-            )
+            ml_path = maxent_ml_path(xtr, phi, reward, s1, sg, len(demos[0]))
             mode_ml_paths = [ml_path for _ in range(len(demos))]
-            mode_ml_path_lls = [ml_path_ll for _ in range(len(demos))]
         else:
             for path in demos:
                 s1 = path[0][0]
                 sg = path[-1][0]
-                ml_path, ml_path_ll = maxent_ml_path(
-                    xtr, phi, reward, s1, sg, len(path), with_ll=True
-                )
+                ml_path = maxent_ml_path(xtr, phi, reward, s1, sg, len(path))
                 mode_ml_paths.append(ml_path)
-                mode_ml_path_lls.append(ml_path_ll)
+
+        # Compute log probability of the ML paths under this mode, for this mode
+        xtr_p, mode_ml_paths_p = padding_trick(xtr, mode_ml_paths)
+        mode_ml_path_lls = maxent_path_logprobs(xtr_p, phi, reward, mode_ml_paths_p)
 
         # Add the log weight for this mixture component
-        mode_ml_path_lls = np.array(mode_ml_path_lls) + np.log(weight)
+        mode_ml_path_lls += np.log(weight)
 
         mixture_paths.append(mode_ml_paths)
         mixture_path_lls.append(mode_ml_path_lls)
