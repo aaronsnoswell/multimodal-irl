@@ -187,50 +187,75 @@ def element_world(
     elif initialisation == "Supervised":
         # We always have uniform clusters in supervised experiments
         assert num_clusters == num_elements
-        # TODO ajs 12/Jan/2020 Skip BV-EM training and just evaluate the mixture
-        raise NotImplementedError
+
+        # Use ground truth responsibility matrix and cluster weights
+        xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+
+        # Learn rewards with ground truth responsibility matrix
+        learn_rewards = solver.mstep(
+            xtr_p, phi, train_gt_resp, train_demos_p, reward_range
+        )
+
+        # Compute baseline NLL
+        mixture_nll = solver.mixture_nll(
+            xtr_p, phi, train_gt_mixture_weights, learn_rewards, train_demos_p
+        )
+
+        # Skip BV training
+        train_iterations = np.nan
+        resp_history = [train_gt_resp]
+        mode_weights_history = [train_gt_mixture_weights]
+        rewards_history = [learn_rewards]
+        nll_history = [mixture_nll]
+        train_reason = "Supervised baseline mixture - no training needed"
+
     else:
         raise ValueError
 
-    # Get initial responsibility matrix
-    init_resp = solver.estep(xtr_p, phi, init_mode_weights, init_rewards, test_demos)
+    if initialisation != "Supervised":
+        # Get initial responsibility matrix
+        init_resp = solver.estep(
+            xtr_p, phi, init_mode_weights, init_rewards, test_demos
+        )
 
-    # Evaluate initial mixture
-    _log.info(f"{_seed}: Evaluating initial solution...")
-    init_eval = element_world_eval(
-        xtr,
-        phi,
-        test_demos,
-        test_gt_resp,
-        test_gt_mixture_weights,
-        gt_rewards,
-        init_resp,
-        init_mode_weights,
-        init_rewards,
-        solver,
-    )
+        # Evaluate initial mixture
+        _log.info(f"{_seed}: Evaluating initial solution...")
+        init_eval = element_world_eval(
+            xtr,
+            phi,
+            test_demos,
+            test_gt_resp,
+            test_gt_mixture_weights,
+            gt_rewards,
+            init_resp,
+            init_mode_weights,
+            init_rewards,
+            solver,
+        )
 
-    # MI-IRL algorithm
-    _log.info(f"{_seed}: BV-EM Loop")
-    (
-        train_iterations,
-        resp_history,
-        mode_weights_history,
-        rewards_history,
-        nll_history,
-        train_reason,
-    ) = bv_em(
-        solver,
-        xtr_p,
-        phi,
-        test_demos_p,
-        num_clusters,
-        reward_range,
-        mode_weights=init_mode_weights,
-        rewards=init_rewards,
-        tolerance=em_nll_tolerance,
-        max_iterations=max_iterations,
-    )
+        # MI-IRL algorithm
+        _log.info(f"{_seed}: BV-EM Loop")
+        (
+            train_iterations,
+            resp_history,
+            mode_weights_history,
+            rewards_history,
+            nll_history,
+            train_reason,
+        ) = bv_em(
+            solver,
+            xtr_p,
+            phi,
+            test_demos_p,
+            num_clusters,
+            reward_range,
+            mode_weights=init_mode_weights,
+            rewards=init_rewards,
+            tolerance=em_nll_tolerance,
+            max_iterations=max_iterations,
+            force_max_iterations=True,
+        )
+
     t1 = datetime.now()
     learn_resp = resp_history[-1]
     learn_mode_weights = mode_weights_history[-1]
