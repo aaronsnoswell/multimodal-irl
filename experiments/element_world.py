@@ -55,8 +55,8 @@ def base_config():
     wind = 0.1
     algorithm = "MaxEnt"
     initialisation = "Random"
-    width = 4
-    height = 4
+    width = 6
+    height = 6
     gamma = 0.99
     max_demonstration_length = 50
     reward_range = (-10.0, 0.0)
