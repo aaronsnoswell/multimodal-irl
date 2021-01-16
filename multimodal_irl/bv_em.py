@@ -41,7 +41,7 @@ class EMSolver(abc.ABC):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda i: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
     ):
         """C-tor
         
@@ -229,7 +229,7 @@ class MaxEntEMSolver(EMSolver):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda i: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
         parallel_executor=None,
     ):
         """C-tor
@@ -516,7 +516,7 @@ class MaxLikEMSolver(EMSolver):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda i: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
     ):
         """C-tor
         
