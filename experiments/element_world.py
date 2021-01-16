@@ -255,7 +255,6 @@ def element_world(
             rewards=init_rewards,
             tolerance=em_nll_tolerance,
             max_iterations=max_iterations,
-            force_max_iterations=True,
         )
 
     t1 = datetime.now()
