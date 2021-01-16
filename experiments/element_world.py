@@ -203,6 +203,12 @@ def element_world(
             xtr_p, phi, train_gt_mixture_weights, learn_rewards, train_demos_p
         )
 
+        # No initial solution for supervised experiment
+        init_resp = None
+        init_mode_weights = None
+        init_rewards = None
+        init_eval = None
+
         # Skip BV training
         train_iterations = np.nan
         resp_history = [train_gt_resp]
@@ -286,10 +292,14 @@ def element_world(
         pickle.dump(
             {
                 # Initial soln
-                "init_resp": init_resp.tolist(),
-                "init_mode_weights": init_mode_weights.tolist(),
-                "init_rewards": [np.array(r.theta).tolist() for r in init_rewards],
-                "init_eval": init_eval,
+                "init_resp": [] if init_resp is None else init_resp.tolist(),
+                "init_mode_weights": []
+                if init_mode_weights is None
+                else init_mode_weights.tolist(),
+                "init_rewards": []
+                if init_rewards is None
+                else [np.array(r.theta).tolist() for r in init_rewards],
+                "init_eval": {} if init_eval is None else init_eval,
                 # Final soln
                 "learn_resp": learn_resp.tolist(),
                 "learn_mode_weights": learn_mode_weights.tolist(),
