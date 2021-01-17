@@ -207,6 +207,7 @@ def element_world(
         init_mode_weights = None
         init_rewards = None
         init_eval = None
+        init_eval_train = None
 
         # Skip BV training
         train_iterations = np.nan
@@ -226,13 +227,26 @@ def element_world(
         )
 
         # Evaluate initial mixture
-        _log.info(f"{_seed}: Evaluating initial solution...")
+        _log.info(f"{_seed}: Evaluating initial solution (test set)")
         init_eval = element_world_eval(
             xtr,
             phi,
             test_demos,
             test_gt_resp,
             test_gt_mixture_weights,
+            gt_rewards,
+            init_resp,
+            init_mode_weights,
+            init_rewards,
+            solver,
+        )
+        _log.info(f"{_seed}: Evaluating initial solution (train set)")
+        init_eval_train = element_world_eval(
+            xtr,
+            phi,
+            train_demos,
+            train_gt_resp,
+            train_gt_mixture_weights,
             gt_rewards,
             init_resp,
             init_mode_weights,
@@ -270,7 +284,7 @@ def element_world(
     train_duration = (t1 - t0).total_seconds()
 
     # Evaluate final mixture
-    _log.info(f"{_seed}: Evaluating final mixture")
+    _log.info(f"{_seed}: Evaluating final mixture (test set)")
     learn_eval = element_world_eval(
         xtr,
         phi,
@@ -283,6 +297,48 @@ def element_world(
         learn_rewards,
         solver,
     )
+    _log.info(f"{_seed}: Evaluating final mixture (train set)")
+    learn_eval_train = element_world_eval(
+        xtr,
+        phi,
+        train_demos,
+        train_gt_resp,
+        train_gt_mixture_weights,
+        gt_rewards,
+        learn_resp,
+        learn_mode_weights,
+        learn_rewards,
+        solver,
+    )
+
+    out_str = (
+        "{}: Finished after {} iterations ({}) =============================\n"
+        "NLL: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
+        "ANID: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
+        "EVD: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
+        "{}\n"
+        "{}\n"
+        "===================================================\n".format(
+            _seed,
+            train_iterations,
+            train_reason,
+            np.nan if init_eval_train is None else init_eval_train["nll"],
+            learn_eval_train["nll"],
+            np.nan if init_eval is None else init_eval["nll"],
+            learn_eval["nll"],
+            np.nan if init_eval_train is None else init_eval_train["anid"],
+            learn_eval_train["anid"],
+            np.nan if init_eval is None else init_eval["anid"],
+            learn_eval["anid"],
+            np.nan if init_eval_train is None else init_eval_train["mcf_evd"],
+            learn_eval_train["mcf_evd"],
+            np.nan if init_eval is None else init_eval["mcf_evd"],
+            learn_eval["mcf_evd"],
+            init_mode_weights,
+            learn_mode_weights,
+        )
+    )
+    print(out_str, flush=True)
 
     # Dump experimental results to artifact
     _log.info(f"{_seed}: Done...")
@@ -299,15 +355,23 @@ def element_world(
                 if init_rewards is None
                 else [np.array(r.theta).tolist() for r in init_rewards],
                 "init_eval": {} if init_eval is None else init_eval,
+                "init_eval_train": {} if init_eval_train is None else init_eval_train,
                 # Final soln
                 "learn_resp": learn_resp.tolist(),
                 "learn_mode_weights": learn_mode_weights.tolist(),
                 "learn_rewards": [np.array(r.theta).tolist() for r in learn_rewards],
                 "learn_eval": learn_eval,
+                "learn_eval_train": learn_eval_train,
                 # Training details
                 "train_iterations": train_iterations,
-                "train_reason": train_reason,
                 "train_duration": train_duration,
+                "resp_history": np.array(resp_history).tolist(),
+                "mode_weights_history": np.array(mode_weights_history).tolist(),
+                "rewards_history": np.array(
+                    [[r.theta for r in r1r2r3] for r1r2r3 in rewards_history]
+                ).tolist(),
+                "nll_history": np.array(nll_history).tolist(),
+                "train_reason": train_reason,
             },
             file,
         )
