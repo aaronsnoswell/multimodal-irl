@@ -98,7 +98,7 @@ class ElementWorldEnv(gym.Env):
 
         while True:
 
-            # 2. Non-goal states get an element
+            # Non-goal states get an element
             for s, (y, x) in enumerate(
                 it.product(range(self._height), range(self._width))
             ):
