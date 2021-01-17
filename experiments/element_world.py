@@ -62,8 +62,8 @@ def base_config():
     max_demonstration_length = 50
     reward_range = (-10.0, 0.0)
     num_init_restarts = 5000
-    em_nll_tolerance = 0.0
-    max_iterations = 10
+    em_nll_tolerance = 0.005
+    max_iterations = 100
     replicate = 0
 
 
@@ -529,6 +529,22 @@ def main():
         help="Number of workers to use - if not provided, will be inferred from system and workload",
     )
 
+    parser.add_argument(
+        "--em_nll_tolerance",
+        required=False,
+        default=0.01,
+        type=float,
+        help="EM convergence tolerance",
+    )
+
+    parser.add_argument(
+        "--max_iterations",
+        required=False,
+        default=100,
+        type=int,
+        help="Maximum number of EM iterations to perform",
+    )
+
     args = parser.parse_args()
     print("META: Arguments:", args, flush=True)
 
@@ -540,6 +556,8 @@ def main():
         "wind": args.wind,
         "algorithm": args.algorithm,
         "initialisation": args.initialisation,
+        "em_nll_tolerance": args.em_nll_tolerance,
+        "max_iterations": args.max_iterations,
     }
 
     print("META: Configuration: ")
