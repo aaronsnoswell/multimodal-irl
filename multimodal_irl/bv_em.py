@@ -248,11 +248,6 @@ class MaxEntEMSolver(EMSolver):
         """
 
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
-
-        # The MaxEnt reward learning objective is convex, so we can safely store the
-        # previous iteration's reward solutions to use as a super-efficient starting
-        # point for the current iteration's reward optimization
-        self._prev_rewards = None
         self.parallel_executor = parallel_executor
 
     def estep(self, xtr, phi, mode_weights, rewards, demonstrations):
@@ -333,10 +328,6 @@ class MaxEntEMSolver(EMSolver):
             reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
 
         theta0 = [np.zeros(len(phi)) for i in range(num_modes)]
-        if self._prev_rewards is not None:
-            # Because the MaxEnt optimization is convex, we can safely re-use the
-            # previous iteration's reward estimates as an efficient starting point
-            theta0 = [self._prev_rewards[i].theta for i in range(num_modes)]
 
         max_path_length = max(*[len(r) for r in demonstrations])
 
@@ -408,9 +399,6 @@ class MaxEntEMSolver(EMSolver):
                 # arg = tasks[future]
                 rewards.append(future.result())
 
-        # Store current reward estimate for next time
-        self._prev_rewards = rewards
-
         return rewards
 
     def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
@@ -444,17 +432,15 @@ class MaxEntEMSolver(EMSolver):
         """
 
         weights_rewards = zip(mode_weights, rewards)
-        proc_one = (
-            lambda xtr, phi, mode_weight, mode_reward, demonstrations: mode_weight
-            * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
-        )
+        proc_one = lambda xtr, phi, mode_weight, mode_reward, demonstrations: np.log(
+            mode_weight
+        ) + maxent_path_logprobs(xtr, phi, mode_reward, demonstrations)
 
-        path_likelihoods = []
+        path_loglikelihoods = []
         if self.parallel_executor is None:
             for mode_weight, mode_reward in weights_rewards:
-                mode_path_likelihoods = proc_one
                 # Add all finite path likelihoods
-                path_likelihoods.extend(
+                path_loglikelihoods.extend(
                     proc_one(xtr, phi, mode_weight, mode_reward, demonstrations)
                 )
         else:
@@ -468,14 +454,18 @@ class MaxEntEMSolver(EMSolver):
             for future in futures.as_completed(tasks):
                 # Use arg or result here if desired
                 # arg = tasks[future]
-                path_likelihoods.extend(future.result())
+                path_loglikelihoods.extend(future.result())
 
         # Drop -inf values
-        path_likelihoods = np.array(path_likelihoods)
-        path_likelihoods = path_likelihoods[np.isfinite(path_likelihoods)]
+        path_loglikelihoods = np.array(path_loglikelihoods)
+        if not np.all(np.isfinite(path_loglikelihoods)):
+            warnings.warn(
+                "MaxEntEMSolver:mixture_nll: Some paths have -inf log likelihood - filtering these out"
+            )
+        path_loglikelihoods = path_loglikelihoods[np.isfinite(path_loglikelihoods)]
 
         # Return average over all paths, modes
-        return -1.0 * np.mean(path_likelihoods)
+        return -1.0 * np.mean(path_loglikelihoods)
 
 
 class MeanOnlyEMSolver(MaxEntEMSolver):
@@ -742,32 +732,30 @@ def bv_em(
     assert len(mode_weights) == num_modes
     assert len(rewards) == num_modes
 
-    # Compute LL
-    nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
-
     resp_history = []
     mode_weights_history = [mode_weights]
     rewards_history = [rewards]
-    nll_history = [nll]
+    nll_history = []
     reason = ""
     for iteration in it.count():
 
         # Call user pre-iteration callback
         solver.pre_it(iteration)
 
+        # Compute LL
+        nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
+        nll_history.append(nll)
+
         # E-step - update responsibility matrix, mixture component weights
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
         resp_history.append(resp)
+
         mode_weights = np.sum(resp, axis=0) / len(rollouts)
         mode_weights_history.append(mode_weights)
 
         # M-step - solve for new reward parameters
         rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
         rewards_history.append(rewards)
-
-        # Compute LL
-        nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
-        nll_history.append(nll)
 
         # Call user post-iteration callback
         solver.post_it(solver, iteration, resp, mode_weights, rewards, nll)
@@ -777,15 +765,21 @@ def bv_em(
             reason = "Only one cluster to learn"
             break
 
-        # Check NLL delta
-        nll_deltas = np.diff(nll_history)
-        if not np.all(nll_deltas <= 0):
-            reason = "NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding"
-            break
-        elif np.abs(nll_deltas[-1]) <= tolerance:
-            # NLL has converged
-            reason = "NLL converged: |NLL delta| <= tol"
-            break
+        if len(nll_history) >= 2:
+            # Check NLL delta
+            nll_deltas = np.diff(nll_history)
+            if np.abs(nll_deltas[-1]) <= tolerance:
+                # NLL has converged
+                reason = "NLL converged: |NLL delta| <= tol"
+                break
+            elif not np.all(nll_deltas <= 0):
+                reason = "NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding"
+                iteration -= 1
+                resp_history = resp_history[:-1]
+                mode_weights_history = mode_weights_history[:-1]
+                rewards_history = rewards_history[:-1]
+                nll_history = nll_history[:-1]
+                break
 
         # Check for max iterations stopping condition
         if max_iterations is not None and iteration >= max_iterations - 1:
