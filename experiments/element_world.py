@@ -451,7 +451,7 @@ def element_world_eval(
             xtr, phi, demos, maxent_ml_path, mixture_weights, rewards
         )
     elif isinstance(solver, MaxLikEMSolver):
-        # Get ML paths from MaxEnt mixture
+        # Get ML paths from MaxLik mixture
         ml_paths = element_world_mixture_ml_path(
             xtr, phi, demos, maxlikelihood_ml_path, mixture_weights, rewards
         )
