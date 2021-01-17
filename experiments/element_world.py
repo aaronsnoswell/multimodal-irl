@@ -267,7 +267,7 @@ def element_world(
             solver,
             xtr_p,
             phi,
-            test_demos_p,
+            train_demos_p,
             num_clusters,
             reward_range,
             mode_weights=init_mode_weights,
