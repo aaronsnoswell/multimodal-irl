@@ -67,7 +67,7 @@ def base_config():
     replicate = 0
 
 
-def element_world(
+def element_world_v2(
     num_elements,
     num_demos,
     demo_skew,
@@ -495,7 +495,7 @@ def run(config_updates, mongodb_url="localhost:27017"):
     # Dynamically bind experiment config and main function
     ex = Experiment()
     ex.config(base_config)
-    ex.main(element_world)
+    ex.main(element_world_v2)
 
     # Attach MongoDB observer if necessary
     if mongodb_url is not None and not ex.observers:
