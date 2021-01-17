@@ -258,6 +258,9 @@ def normalized_information_distance(resp1, resp2):
         (float): Normalized information distance on range [0, 1]. Lower values indicate
             more agreement between the two clusterings.
     """
+    # Handle edge case where both matrices have a single cluster and entropy is 0.0
+    if resp1.shape[1] == resp2.shape[1] == 1:
+        return 0.0
     cont = soft_contingency_table(resp1, resp2)
     return 1.0 - (
         contingency_mutual_info(cont)
@@ -286,6 +289,10 @@ def adjusted_normalized_information_distance(resp1, resp2, num_samples=1000):
 
     N, K1 = resp1.shape
     _, K2 = resp2.shape
+
+    # Handle edge case where both matrices have a single cluster and entropy is 0.0
+    if K1 == resp2.shape[1] == 1:
+        return 0.0
 
     # Find expectations with fixed N, K1, K2
     mis = []
