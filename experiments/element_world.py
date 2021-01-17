@@ -459,16 +459,20 @@ def element_world_eval(
         raise ValueError
 
     # Measure % Distance Missed of ML paths
-    pdms = [
-        percent_distance_missed_metric(ml_path, gt_path)
-        for (gt_path, ml_path) in zip(demos, ml_paths)
-    ]
+    pdms = np.array(
+        [
+            percent_distance_missed_metric(ml_path, gt_path)
+            for (gt_path, ml_path) in zip(demos, ml_paths)
+        ]
+    )
 
     # Measure feature distance of ML paths
-    fds = [
-        phi.feature_distance(gt_path, ml_path)
-        for (gt_path, ml_path) in zip(demos, ml_paths)
-    ]
+    fds = np.array(
+        [
+            phi.feature_distance(gt_path, ml_path)
+            for (gt_path, ml_path) in zip(demos, ml_paths)
+        ]
+    )
 
     return dict(
         nll=nll,
