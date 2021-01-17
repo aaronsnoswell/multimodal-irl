@@ -223,7 +223,10 @@ def element_world_v2(
     if initialisation != "Supervised":
         # Get initial responsibility matrix
         init_resp = solver.estep(
-            xtr_p, phi, init_mode_weights, init_rewards, test_demos
+            xtr_p, phi, init_mode_weights, init_rewards, test_demos_p
+        )
+        init_resp_train = solver.estep(
+            xtr_p, phi, init_mode_weights, init_rewards, train_demos_p
         )
 
         # Evaluate initial mixture
@@ -248,7 +251,7 @@ def element_world_v2(
             train_gt_resp,
             train_gt_mixture_weights,
             gt_rewards,
-            init_resp,
+            init_resp_train,
             init_mode_weights,
             init_rewards,
             solver,
@@ -283,6 +286,11 @@ def element_world_v2(
     learn_nll = nll_history[-1]
     train_duration = (t1 - t0).total_seconds()
 
+    # Derive Responsibility matrix for test paths
+    learn_resp_test = solver.estep(
+        xtr_p, phi, learn_mode_weights, learn_rewards, test_demos_p
+    )
+
     # Evaluate final mixture
     _log.info(f"{_seed}: Evaluating final mixture (test set)")
     learn_eval = element_world_eval(
@@ -292,7 +300,7 @@ def element_world_v2(
         test_gt_resp,
         test_gt_mixture_weights,
         gt_rewards,
-        learn_resp,
+        learn_resp_test,
         learn_mode_weights,
         learn_rewards,
         solver,
