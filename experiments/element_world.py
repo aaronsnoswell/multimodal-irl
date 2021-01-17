@@ -49,11 +49,10 @@ from unimodal_irl.metrics import ile_evd
 
 
 def base_config():
-    """Define base experimental parameters here"""
-    num_elements = 4
+    num_elements = 3
     num_demos = 100
     demo_skew = 0.0
-    num_clusters = 4
+    num_clusters = 3
     wind = 0.1
     algorithm = "MaxEnt"
     initialisation = "Random"
@@ -459,7 +458,7 @@ def main():
     parser.add_argument(
         "--num_elements",
         required=False,
-        default=4,
+        default=3,
         type=int,
         help="Number of elements (ground truth clusters) to use",
     )
@@ -483,7 +482,7 @@ def main():
     parser.add_argument(
         "--num_clusters",
         required=False,
-        default=4,
+        default=3,
         type=int,
         help="Number of clusters to learn",
     )
