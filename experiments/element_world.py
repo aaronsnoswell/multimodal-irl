@@ -62,7 +62,7 @@ def base_config():
     max_demonstration_length = 50
     reward_range = (-10.0, 0.0)
     num_init_restarts = 5000
-    em_nll_tolerance = 0.0001
+    em_nll_tolerance = 1e-5
     max_iterations = 100
     boltzmann_scale = 5.0
     replicate = 0
@@ -639,7 +639,7 @@ def main():
     parser.add_argument(
         "--em_nll_tolerance",
         required=False,
-        default=0.001,
+        default=1e-5,
         type=float,
         help="EM convergence tolerance",
     )
