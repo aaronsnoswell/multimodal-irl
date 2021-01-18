@@ -238,7 +238,7 @@ class MaxEntEMSolver(EMSolver):
         pre_it=lambda i: None,
         post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
         parallel_executor=None,
-        method="SLSQP",
+        method="L-BFGS-B",
     ):
         """C-tor
         
