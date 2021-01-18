@@ -162,6 +162,8 @@ class EMSolver(abc.ABC):
         for idx, clstr in enumerate(hard_initial_clusters):
             soft_initial_clusters[idx, clstr] = 1.0
 
+        print("KMeans\n", soft_initial_clusters)
+
         # Compute initial mode weights from soft clustering
         mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
 
@@ -207,6 +209,8 @@ class EMSolver(abc.ABC):
         gmm = GaussianMixture(n_components=num_clusters, n_init=num_restarts)
         gmm.fit(feature_mat)
         soft_initial_clusters = gmm.predict_proba(feature_mat)
+
+        print("GMM\n", soft_initial_clusters)
 
         # Compute initial mode weights from soft clustering
         mode_weights = np.sum(soft_initial_clusters, axis=0) / len(rollouts)
