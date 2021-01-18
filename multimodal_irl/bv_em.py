@@ -236,6 +236,7 @@ class MaxEntEMSolver(EMSolver):
         pre_it=lambda i: None,
         post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
         parallel_executor=None,
+        method="SLSQP",
     ):
         """C-tor
         
@@ -243,6 +244,7 @@ class MaxEntEMSolver(EMSolver):
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
+            
             pre_it (callable): Optional function accepting the current iteration - called
                 before that iteration commences
             post_it (callable): Optional function accepting the solver, current iteration,
@@ -250,10 +252,16 @@ class MaxEntEMSolver(EMSolver):
                 after that iteration ends
             parallel_executor (concurrent.futures.Executor) optional executor object to
                 parallelize each the E and M steps across modes.
+            method (str): Optimizer to use. Options are;
+                - SLSQP - Seems to work well, even for challenging problems
+                - CMA-ES - Seems to work well, even for challenging problems
+                - L-BFGS-B - Seems to diverge on difficult problems (line search fails)
+                - TNC - Seems to diverge on difficult problems
+                - trust-const - Seems to diverge on difficult problems
         """
-
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
         self.parallel_executor = parallel_executor
+        self.method = method
 
     def estep(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Compute responsibility matrix using MaxEnt reward parameters
@@ -307,9 +315,7 @@ class MaxEntEMSolver(EMSolver):
 
         return resp
 
-    def mstep(
-        self, xtr, phi, resp, demonstrations, reward_range=None,
-    ):
+    def mstep(self, xtr, phi, resp, demonstrations, reward_range=None):
         """Compute reward parameters given responsibility matrix
         
         Args:
@@ -343,71 +349,79 @@ class MaxEntEMSolver(EMSolver):
             minimize_kwargs,
             rollout_weights,
             theta0,
+            method="SLSQP",
         ):
             phi_bar = phi.expectation(
                 demonstrations, gamma=xtr.gamma, weights=rollout_weights
             )
 
-            # # Bounces
-            # res_lbfgs = minimize(
-            #     sw_maxent_irl,
-            #     theta0,
-            #     args=(xtr, phi, phi_bar, max_path_length),
-            #     method="L-BFGS-B",
-            #     jac=True,
-            #     bounds=reward_parameter_bounds,
-            #     options=minimize_options,
-            #     **(minimize_kwargs),
-            # )
-            # x_star = res_lbfgs.x
-
-            # # Bounces
-            # res_tnc = minimize(
-            #     sw_maxent_irl,
-            #     theta0,
-            #     args=(xtr, phi, phi_bar, max_path_length),
-            #     method="TNC",
-            #     jac=True,
-            #     bounds=reward_parameter_bounds,
-            #     options=minimize_options,
-            #     **(minimize_kwargs),
-            # )
-            # x_star = res_tnc.x
-
-            # Smoothly converges
-            res_slsqp = minimize(
-                sw_maxent_irl,
-                theta0,
-                args=(xtr, phi, phi_bar, max_path_length),
-                method="SLSQP",
-                jac=True,
-                bounds=reward_parameter_bounds,
-                options=minimize_options,
-                **(minimize_kwargs),
-            )
-            x_star = res_slsqp.x
-
-            # # Bounces
-            # res_trust_const = minimize(
-            #     sw_maxent_irl,
-            #     theta0,
-            #     args=(xtr, phi, phi_bar, max_path_length),
-            #     method="trust-constr",
-            #     jac=True,
-            #     bounds=reward_parameter_bounds,
-            #     options=minimize_options,
-            #     **(minimize_kwargs),
-            # )
-            # x_star = res_trust_const.x
-
-            # # Smoothly converges
-            # es = cma.CMAEvolutionStrategy(
-            #     theta0,
-            #     0.5,
-            #     {"bounds": list(zip(*reward_parameter_bounds)), "verbose": -9},
-            # )
-            # es.optimize(sw_maxent_irl, args=(xtr, phi, phi_bar, max_path_length, True))
-            # x_star = es.result[0]
+            if method == "L-BFGS-B":
+                # Bounces
+                res_lbfgs = minimize(
+                    sw_maxent_irl,
+                    theta0,
+                    args=(xtr, phi, phi_bar, max_path_length),
+                    method="L-BFGS-B",
+                    jac=True,
+                    bounds=reward_parameter_bounds,
+                    options=minimize_options,
+                    **(minimize_kwargs),
+                )
+                x_star = res_lbfgs.x
+            elif method == "TNC":
+                # Bounces
+                res_tnc = minimize(
+                    sw_maxent_irl,
+                    theta0,
+                    args=(xtr, phi, phi_bar, max_path_length),
+                    method="TNC",
+                    jac=True,
+                    bounds=reward_parameter_bounds,
+                    options=minimize_options,
+                    **(minimize_kwargs),
+                )
+                x_star = res_tnc.x
+            elif method == "SLSQP":
+                # Smoothly converges
+                res_slsqp = minimize(
+                    sw_maxent_irl,
+                    theta0,
+                    args=(xtr, phi, phi_bar, max_path_length),
+                    method="SLSQP",
+                    jac=True,
+                    bounds=reward_parameter_bounds,
+                    options=minimize_options,
+                    **(minimize_kwargs),
+                )
+                x_star = res_slsqp.x
+            elif method == "trust-const":
+                # Bounces
+                res_trust_const = minimize(
+                    sw_maxent_irl,
+                    theta0,
+                    args=(xtr, phi, phi_bar, max_path_length),
+                    method="trust-constr",
+                    jac=True,
+                    bounds=reward_parameter_bounds,
+                    options=minimize_options,
+                    **(minimize_kwargs),
+                )
+                x_star = res_trust_const.x
+            elif method == "CMA-ES":
+                print("Doing CMA-ES")
+                # Smoothly converges
+                std_dev_init_val = 0.5
+                es = cma.CMAEvolutionStrategy(
+                    theta0,
+                    std_dev_init_val,
+                    {"bounds": list(zip(*reward_parameter_bounds)), "verbose": -9},
+                )
+                es.optimize(
+                    sw_maxent_irl, args=(xtr, phi, phi_bar, max_path_length, True)
+                )
+                x_star = es.result[0]
+            else:
+                raise ValueError
 
             return Linear(x_star)
 
@@ -428,6 +442,7 @@ class MaxEntEMSolver(EMSolver):
                         self.minimize_kwargs,
                         mode_demo_weights,
                         mode_theta0,
+                        method=self.method,
                     )
                 )
         else:
@@ -443,6 +458,7 @@ class MaxEntEMSolver(EMSolver):
                     self.minimize_kwargs,
                     mode_demo_weights,
                     mode_theta0,
+                    self.method,
                 )
                 for mode_demo_weights, mode_theta0 in demo_weights_theta0s
             }
