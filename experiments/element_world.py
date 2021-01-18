@@ -441,7 +441,7 @@ def element_world_eval(
     xtr_p, demos_p = padding_trick(xtr, demos)
 
     # Measure NLL
-    _log.info(f"{_seed}: Evaluating: Measing NLL")
+    _log.info(f"{_seed}: Evaluating: Measuring NLL")
     nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
 
     # Measure clustering performance
