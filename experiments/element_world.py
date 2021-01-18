@@ -57,17 +57,16 @@ def base_config():
     algorithm = "MaxEnt"
     initialisation = "Random"
     width = 6
-    height = 6
     gamma = 0.99
     max_demonstration_length = 50
     reward_range = (-10.0, 0.0)
     num_init_restarts = 5000
-    em_nll_tolerance = 0.005
+    em_nll_tolerance = 0.0001
     max_iterations = 100
     replicate = 0
 
 
-def element_world_v2(
+def element_world_v4(
     num_elements,
     num_demos,
     demo_skew,
@@ -76,7 +75,6 @@ def element_world_v2(
     algorithm,
     initialisation,
     width,
-    height,
     gamma,
     max_demonstration_length,
     reward_range,
@@ -92,7 +90,7 @@ def element_world_v2(
     # Construct EW
     _log.info(f"{_seed}: Preparing environment...")
     env = ElementWorldEnv(
-        width=width, height=height, num_elements=num_elements, wind=wind, gamma=gamma
+        width=width, num_elements=num_elements, wind=wind, gamma=gamma
     )
     xtr, phi, gt_rewards = element_world_extras(env)
 
@@ -147,6 +145,11 @@ def element_world_v2(
     def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
         _log.info(f"{_seed}: Iteration {iteration} ended")
         _run.log_scalar("training.nll", nll)
+        for mw_idx, mw in enumerate(mode_weights):
+            _run.log_scalar(f"training.mw{mw_idx+1}", mw)
+        for reward_idx, reward in enumerate(rewards):
+            for theta_idx, theta_val in enumerate(reward.theta):
+                _run.log_scalar(f"training.r{reward_idx+1}.t{theta_idx+1}", theta_val)
 
         # TODO ajs evaluate model here?
 
@@ -438,6 +441,7 @@ def element_world_eval(
                 rewards[learned_mode_idx],
                 ret_gt_value=True,
                 gt_policy_value=gt_state_value_vector,
+                vi_kwargs=dict(eps=1e-4),
             )
             ile_mat[learned_mode_idx, gt_mode_idx] = ile
             evd_mat[learned_mode_idx, gt_mode_idx] = evd
@@ -507,7 +511,7 @@ def run(config_updates, mongodb_url="localhost:27017"):
     # Dynamically bind experiment config and main function
     ex = Experiment()
     ex.config(base_config)
-    ex.main(element_world_v2)
+    ex.main(element_world_v4)
 
     # Attach MongoDB observer if necessary
     if mongodb_url is not None and not ex.observers:
@@ -608,7 +612,7 @@ def main():
     parser.add_argument(
         "--em_nll_tolerance",
         required=False,
-        default=0.01,
+        default=0.001,
         type=float,
         help="EM convergence tolerance",
     )
