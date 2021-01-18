@@ -53,7 +53,6 @@ class ElementWorldEnv(gym.Env):
     def __init__(
         self,
         width=6,
-        height=6,
         num_elements=4,
         target_element=0,
         wind=0.1,
@@ -72,7 +71,8 @@ class ElementWorldEnv(gym.Env):
         self.seed(seed)
 
         self._width = width
-        self._height = height
+        self._element_zone_size = 3
+        self._height = num_elements * self._element_zone_size
         self._num_elements = num_elements
         self.observation_space = spaces.Discrete(self._width * self._height)
         self.action_space = spaces.Discrete(len(self.ACTION_MAP))
@@ -87,37 +87,31 @@ class ElementWorldEnv(gym.Env):
             self.FEATURES.update({chr(65 + e - 2): e})
         self.REV_FEATURES = {v: k for k, v in self.FEATURES.items()}
 
+        # Build the feature matrix
+        self._feature_matrix = np.zeros((self._height, self._width), dtype=int)
+
+        for element in range(self._num_elements):
+            element_starty = element * self._element_zone_size
+            element_endy = (element + 1) * self._element_zone_size
+            self._feature_matrix[element_starty:element_endy, :] = element + 2
+
+        # Rotate each central column of the world
+        for col in range(1, self._width):
+            roty = np.random.choice([-2, -1, 0, 1, 2])
+            orig_values = self._feature_matrix[:, col:]
+            self._feature_matrix[:, col:] = np.roll(orig_values, roty, axis=0)
+
         # Goal states are along the right hand wall
         self._goal_states = (self._width * np.arange(1, self._height + 1) - 1).astype(
             int
         )
+        for goal_state in self._goal_states:
+            self._feature_matrix.flat[goal_state] = self.FEATURES["_"]
 
         # Start states are the left hand wall
         self._start_states = (self._width * np.arange(0, self._height)).astype(int)
-
-        # Build the feature matrix
-        self._feature_matrix = np.zeros((self._height, self._width), dtype=int)
-        for goal_state in self._goal_states:
-            self._feature_matrix.flat[goal_state] = self.FEATURES["_"]
         for start_state in self._start_states:
             self._feature_matrix.flat[start_state] = self.FEATURES["#"]
-
-        while True:
-
-            # Non-goal states get an element
-            for s, (y, x) in enumerate(
-                it.product(range(self._height), range(self._width))
-            ):
-                if s in self._goal_states or s in self._start_states:
-                    continue
-                self._feature_matrix[y, x] = np.random.randint(
-                    2, self._num_elements + 2
-                )
-
-            # Check that all features are represented
-            if len(set(self._feature_matrix.flat)) == len(self.FEATURES):
-                break
-            # Otherwise, try again
 
         # Prepare other items
         self._states = np.arange(self.observation_space.n, dtype=int)
@@ -234,7 +228,14 @@ class ElementWorldEnv(gym.Env):
     def _yx2s(self, yx):
         """Convert y, x tuple to state"""
         y, x = yx
-        assert 0 <= y < self._height
+
+        # We are now wrapping the y-axis!
+        # assert 0 <= y < self._height
+        while y < 0:
+            y += self._height
+        while y > self._height - 1:
+            y -= self._height
+
         assert 0 <= x < self._width
         return y * self._width + x
 
@@ -252,10 +253,10 @@ class ElementWorldEnv(gym.Env):
 
         y, x = self._s2yx(state)
         neighbours = []
-        if y > 0:
-            neighbours.append(self._yx2s((y - 1, x)))
-        if y < self._height - 1:
-            neighbours.append(self._yx2s((y + 1, x)))
+        # if y > 0:
+        neighbours.append(self._yx2s((y - 1, x)))
+        # if y < self._height - 1:
+        neighbours.append(self._yx2s((y + 1, x)))
         if x > 0:
             neighbours.append(self._yx2s((y, x - 1)))
         if x < self._width - 1:
