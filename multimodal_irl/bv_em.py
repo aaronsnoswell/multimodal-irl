@@ -2,6 +2,7 @@
 
 
 import abc
+import cma
 import copy
 import warnings
 import numpy as np
@@ -321,12 +322,9 @@ class MaxEntEMSolver(EMSolver):
 
         num_rollouts, num_modes = resp.shape
 
-        method = "BFGS"
         reward_parameter_bounds = None
         if reward_range is not None:
-            method = "L-BFGS-B"
             reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
-
         theta0 = [np.zeros(len(phi)) for i in range(num_modes)]
 
         max_path_length = max(*[len(r) for r in demonstrations])
@@ -335,7 +333,6 @@ class MaxEntEMSolver(EMSolver):
             xtr,
             phi,
             max_path_length,
-            method,
             demonstrations,
             reward_parameter_bounds,
             minimize_options,
@@ -347,28 +344,80 @@ class MaxEntEMSolver(EMSolver):
                 demonstrations, gamma=xtr.gamma, weights=rollout_weights
             )
 
-            res = minimize(
+            # # Bounces
+            # res_lbfgs = minimize(
+            #     sw_maxent_irl,
+            #     theta0,
+            #     args=(xtr, phi, phi_bar, max_path_length),
+            #     method="L-BFGS-B",
+            #     jac=True,
+            #     bounds=reward_parameter_bounds,
+            #     options=minimize_options,
+            #     **(minimize_kwargs),
+            # )
+            # x_star = res_lbfgs.x
+
+            # # Bounces
+            # res_tnc = minimize(
+            #     sw_maxent_irl,
+            #     theta0,
+            #     args=(xtr, phi, phi_bar, max_path_length),
+            #     method="TNC",
+            #     jac=True,
+            #     bounds=reward_parameter_bounds,
+            #     options=minimize_options,
+            #     **(minimize_kwargs),
+            # )
+            # x_star = res_tnc.x
+
+            # Smoothly converges
+            res_slsqp = minimize(
                 sw_maxent_irl,
                 theta0,
                 args=(xtr, phi, phi_bar, max_path_length),
-                method=method,
+                method="SLSQP",
                 jac=True,
                 bounds=reward_parameter_bounds,
                 options=minimize_options,
                 **(minimize_kwargs),
             )
-            return Linear(res.x[:])
+            x_star = res_slsqp.x
+
+            # # Bounces
+            # res_trust_const = minimize(
+            #     sw_maxent_irl,
+            #     theta0,
+            #     args=(xtr, phi, phi_bar, max_path_length),
+            #     method="trust-constr",
+            #     jac=True,
+            #     bounds=reward_parameter_bounds,
+            #     options=minimize_options,
+            #     **(minimize_kwargs),
+            # )
+            # x_star = res_trust_const.x
+
+            # # Smoothly converges
+            # es = cma.CMAEvolutionStrategy(
+            #     theta0,
+            #     0.5,
+            #     {"bounds": list(zip(*reward_parameter_bounds)), "verbose": -9},
+            # )
+            # es.optimize(sw_maxent_irl, args=(xtr, phi, phi_bar, max_path_length, True))
+            # x_star = es.result[0]
+
+            return Linear(x_star)
 
         demo_weights_theta0s = zip(resp.T, theta0)
         rewards = []
         if self.parallel_executor is None:
-            for mode_demo_weights, mode_theta0 in demo_weights_theta0s:
+            for m_idx, (mode_demo_weights, mode_theta0) in enumerate(
+                demo_weights_theta0s
+            ):
                 rewards.append(
                     proc_one(
                         xtr,
                         phi,
                         max_path_length,
-                        method,
                         demonstrations,
                         reward_parameter_bounds,
                         self.minimize_options,
@@ -384,7 +433,6 @@ class MaxEntEMSolver(EMSolver):
                     xtr,
                     phi,
                     max_path_length,
-                    method,
                     demonstrations,
                     reward_parameter_bounds,
                     self.minimize_options,
@@ -773,7 +821,10 @@ def bv_em(
                 reason = "NLL converged: |NLL delta| <= tol"
                 break
             elif not np.all(nll_deltas <= 0):
-                reason = "NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding"
+                warnings.warn(
+                    f"NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding. NLL Deltas = {nll_deltas}"
+                )
+                reason = "NLL is not monotonically decreasing"
                 iteration -= 1
                 resp_history = resp_history[:-1]
                 mode_weights_history = mode_weights_history[:-1]
