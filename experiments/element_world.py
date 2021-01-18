@@ -254,6 +254,8 @@ def element_world_v4(
             init_mode_weights,
             init_rewards,
             solver,
+            _log,
+            _seed,
         )
         _log.info(f"{_seed}: Evaluating initial solution (train set)")
         init_eval_train = element_world_eval(
@@ -267,6 +269,8 @@ def element_world_v4(
             init_mode_weights,
             init_rewards,
             solver,
+            _log,
+            _seed,
         )
 
         # MI-IRL algorithm
@@ -316,6 +320,8 @@ def element_world_v4(
         learn_mode_weights,
         learn_rewards,
         solver,
+        _log,
+        _seed,
     )
     _log.info(f"{_seed}: Evaluating final mixture (train set)")
     learn_eval_train = element_world_eval(
@@ -329,6 +335,8 @@ def element_world_v4(
         learn_mode_weights,
         learn_rewards,
         solver,
+        _log,
+        _seed,
     )
 
     out_str = (
@@ -414,6 +422,8 @@ def element_world_eval(
     mixture_weights,
     rewards,
     solver,
+    _log,
+    _seed,
 ):
     """Evaluate a ElementWorld mixture model
     
@@ -431,13 +441,16 @@ def element_world_eval(
     xtr_p, demos_p = padding_trick(xtr, demos)
 
     # Measure NLL
+    _log.info(f"{_seed}: Evaluating: Measing NLL")
     nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
 
     # Measure clustering performance
+    _log.info(f"{_seed}: Evaluating: Clustering Performance (NID/ANID)")
     nid = normalized_information_distance(gt_resp, resp)
     anid = adjusted_normalized_information_distance(gt_resp, resp)
 
     # Compute ILE, EVD matrices
+    _log.info(f"{_seed}: Evaluating: Reward Performance (ILE/EVD Matrices)")
     ile_mat = np.zeros((num_clusters, gt_num_clusters))
     evd_mat = np.zeros((num_clusters, gt_num_clusters))
     for gt_mode_idx in range(gt_num_clusters):
@@ -456,6 +469,7 @@ def element_world_eval(
             evd_mat[learned_mode_idx, gt_mode_idx] = evd
 
     # Measure reward performance
+    _log.info(f"{_seed}: Evaluating: Reward Performance (ILE, EVD)")
     mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
         mixture_weights, gt_mixture_weights, ile_mat
     )
@@ -463,6 +477,7 @@ def element_world_eval(
         mixture_weights, gt_mixture_weights, evd_mat
     )
 
+    _log.info(f"{_seed}: Evaluating: ML Paths")
     ml_paths = []
     pdms = []
     fds = []
@@ -479,6 +494,7 @@ def element_world_eval(
     else:
         raise ValueError
 
+    _log.info(f"{_seed}: Evaluating: % distance missed")
     # Measure % Distance Missed of ML paths
     pdms = np.array(
         [
@@ -488,6 +504,7 @@ def element_world_eval(
     )
 
     # Measure feature distance of ML paths
+    _log.info(f"{_seed}: Evaluating: feature distance")
     fds = np.array(
         [
             phi.feature_distance(gt_path, ml_path)
