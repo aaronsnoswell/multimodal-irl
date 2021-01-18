@@ -294,6 +294,7 @@ def element_world_v4(
             tolerance=em_nll_tolerance,
             max_iterations=max_iterations,
         )
+        _log.info(f"{_seed}: BV-EM Loop terminated, reason = {train_reason}")
 
     t1 = datetime.now()
     learn_resp = resp_history[-1]
