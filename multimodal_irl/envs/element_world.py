@@ -21,7 +21,7 @@ from unimodal_irl.sw_maxent_irl import maxent_ml_path, maxent_path_logprobs
 class ElementWorldEnv(gym.Env):
 
     # Rewards values
-    REWARD_VALUES = {"very_bad": -10.0, "bad": -5.0, "meh": 0.0}
+    REWARD_VALUES = {"very_bad": -10.0, "bad": -1.0, "meh": 0.0}
 
     # Actions the agent can take
     ACTION_MAP = {
@@ -80,21 +80,27 @@ class ElementWorldEnv(gym.Env):
         self._wind = wind
 
         # Populate feature dictionary
+        # Start feature is signified by '#'
         # Goal feature is signified by '_'
-        self.FEATURES = {"_": 0}
-        for e in range(1, self._num_elements + 1):
-            self.FEATURES.update({chr(65 + e - 1): e})
+        self.FEATURES = {"#": 0, "_": 1}
+        for e in range(2, self._num_elements + 2):
+            self.FEATURES.update({chr(65 + e - 2): e})
         self.REV_FEATURES = {v: k for k, v in self.FEATURES.items()}
 
-        # Goal is always the bottom right cell
-        goal_state = self.observation_space.n - 1
+        # Goal states are along the right hand wall
+        self._goal_states = (self._width * np.arange(1, self._height + 1) - 1).astype(
+            int
+        )
 
-        # Start is always the top left cell
-        self._start_states = np.array([0])
+        # Start states are the left hand wall
+        self._start_states = (self._width * np.arange(0, self._height)).astype(int)
 
         # Build the feature matrix
         self._feature_matrix = np.zeros((self._height, self._width), dtype=int)
-        self._feature_matrix.flat[goal_state] = self.FEATURES["_"]
+        for goal_state in self._goal_states:
+            self._feature_matrix.flat[goal_state] = self.FEATURES["_"]
+        for start_state in self._start_states:
+            self._feature_matrix.flat[start_state] = self.FEATURES["#"]
 
         while True:
 
@@ -102,10 +108,10 @@ class ElementWorldEnv(gym.Env):
             for s, (y, x) in enumerate(
                 it.product(range(self._height), range(self._width))
             ):
-                if s == goal_state:
+                if s in self._goal_states or s in self._start_states:
                     continue
                 self._feature_matrix[y, x] = np.random.randint(
-                    1, self._num_elements + 1
+                    2, self._num_elements + 2
                 )
 
             # Check that all features are represented
@@ -122,7 +128,7 @@ class ElementWorldEnv(gym.Env):
         self._p0s /= np.sum(self._p0s)
 
         self._terminal_state_mask = np.zeros(self.observation_space.n)
-        self._terminal_state_mask[goal_state] = 1.0
+        self._terminal_state_mask[self._goal_states] = 1.0
 
         # Compute s, a, s' transition matrix
         self._t_mat = self._build_transition_matrix()
@@ -139,16 +145,17 @@ class ElementWorldEnv(gym.Env):
     def set_target(self, target_element):
         """Sets the target element, updating the state reward function in the process"""
         self._target_element = target_element
-        self._feat2reward = [
-            self.REWARD_VALUES["meh"]
-            if v == 0
-            else (
-                self.REWARD_VALUES["bad"]
-                if v == self._target_element + 1
-                else self.REWARD_VALUES["very_bad"]
-            )
-            for k, v in self.FEATURES.items()
-        ]
+        self._feat2reward = []
+        for k, v in self.FEATURES.items():
+            if v == 0:
+                self._feat2reward.append(self.REWARD_VALUES["meh"])
+            elif v == 1:
+                self._feat2reward.append(self.REWARD_VALUES["bad"])
+            else:
+                if v == self._target_element + 2:
+                    self._feat2reward.append(self.REWARD_VALUES["bad"])
+                else:
+                    self._feat2reward.append(self.REWARD_VALUES["very_bad"])
         self._state_rewards = np.array(
             [self._feat2reward[self._feature_matrix.flat[s]] for s in self._states]
         )
@@ -326,11 +333,23 @@ def element_world_extras(env):
     phi = Disjoint(Disjoint.Type.OBSERVATION, xtr, env._feature_matrix.flatten())
 
     rewards = []
-    for target in range(1, env._num_elements + 1):
-        r = np.zeros(env._num_elements + 1) + env.REWARD_VALUES["very_bad"]
+    for target in range(2, env._num_elements + 2):
+        r = np.zeros(env._num_elements + 2) + env.REWARD_VALUES["very_bad"]
         r[target] = env.REWARD_VALUES["bad"]
-        r[0] = env.REWARD_VALUES["meh"]
-        rewards.append(Linear(r))
+        r[0] = env.REWARD_VALUES["bad"]
+        r[1] = env.REWARD_VALUES["meh"]
+        reward = Linear(r)
+
+        v_star = v_vi(xtr, phi, reward).reshape(env._height, env._width)
+        policy_will_leave_start_line = np.any(v_star[:, 1] > v_star[:, 0])
+        assert (
+            policy_will_leave_start_line
+        ), f"ElementWorld config is such that element {target - 2} will never leave the starting area - consider increasing the value of \gamma"
+        # XXX ajs this is a necessary but not sufficient condition - we should also check that every point
+        # on the starting line has a neighbor with better value on the starting line
+        # or on the 2nd line
+
+        rewards.append(reward)
 
     return xtr, phi, rewards
 
