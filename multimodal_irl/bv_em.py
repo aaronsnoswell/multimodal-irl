@@ -840,6 +840,27 @@ def bv_em(
                 rewards_history = rewards_history[:-1]
                 nll_history = nll_history[:-1]
                 break
+            else:
+                pass
+                # # NY check to see if NLL computation is incorrect or not
+                # for r_idx in range(len(rewards)):
+                #     resp_now = resp_history[-2]
+                #     reward_now = rewards_history[-2][r_idx]
+                #     reward_future = rewards_history[-1][r_idx]
+                #     val1 = np.average(
+                #         np.exp(maxent_path_logprobs(xtr, phi, reward_now, rollouts)),
+                #         weights=resp_now[:, r_idx],
+                #     )
+                #     val2 = np.average(
+                #         np.exp(maxent_path_logprobs(xtr, phi, reward_future, rollouts)),
+                #         weights=resp_now[:, r_idx],
+                #     )
+                #     print(val1, val2)
+                #     if val2 > val1:
+                #         print(
+                #             "Val2 is larger while NLL is decreasing - Mixture NLL comp is wrong"
+                #         )
+                #         assert False
 
         # Check for max iterations stopping condition
         if max_iterations is not None and iteration >= max_iterations - 1:
