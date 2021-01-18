@@ -29,6 +29,7 @@ from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em, MeanOnly
 
 from mdp_extras import (
     OptimalPolicy,
+    BoltzmannExplorationPolicy,
     padding_trick,
     q_vi,
     PaddedMDPWarning,
@@ -63,6 +64,7 @@ def base_config():
     num_init_restarts = 5000
     em_nll_tolerance = 0.0001
     max_iterations = 100
+    boltzmann_scale = 5.0
     replicate = 0
 
 
@@ -81,6 +83,7 @@ def element_world_v4(
     num_init_restarts,
     em_nll_tolerance,
     max_iterations,
+    boltzmann_scale,
     _log,
     _seed,
     _run,
@@ -118,8 +121,11 @@ def element_world_v4(
         resp_row[ri] = 1.0
         for _ in range(num_element_demos):
             train_gt_resp.append(resp_row)
+        q_star = q_vi(xtr, phi, reward)
+        # pi_star = OptimalPolicy(q_star)
+        pi_star = BoltzmannExplorationPolicy(q_star, scale=boltzmann_scale)
         train_demos.extend(
-            OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
+            pi_star.get_rollouts(
                 env, num_element_demos, max_path_length=max_demonstration_length
             )
         )
@@ -134,8 +140,11 @@ def element_world_v4(
         resp_row[ri] = 1.0
         for _ in range(num_element_demos):
             test_gt_resp.append(resp_row)
+        q_star = q_vi(xtr, phi, reward)
+        # pi_star = OptimalPolicy(q_star)
+        pi_star = BoltzmannExplorationPolicy(q_star, scale=boltzmann_scale)
         test_demos.extend(
-            OptimalPolicy(q_vi(xtr, phi, reward)).get_rollouts(
+            pi_star.get_rollouts(
                 env, num_element_demos, max_path_length=max_demonstration_length
             )
         )
