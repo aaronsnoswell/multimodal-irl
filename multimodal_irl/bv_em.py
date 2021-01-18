@@ -117,6 +117,8 @@ class EMSolver(abc.ABC):
             1
         )[0]
 
+        print("Random\n", mode_weights)
+
         rewards = [
             Linear(np.random.uniform(*reward_range, len(phi)))
             for _ in range(num_clusters)
