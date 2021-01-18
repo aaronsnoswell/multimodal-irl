@@ -351,14 +351,13 @@ class MaxEntEMSolver(EMSolver):
             minimize_kwargs,
             rollout_weights,
             theta0,
-            method="SLSQP",
+            method="L-BFGS-B",
         ):
             phi_bar = phi.expectation(
                 demonstrations, gamma=xtr.gamma, weights=rollout_weights
             )
 
             if method == "L-BFGS-B":
-                # Bounces
                 res_lbfgs = minimize(
                     sw_maxent_irl,
                     theta0,
@@ -371,7 +370,6 @@ class MaxEntEMSolver(EMSolver):
                 )
                 x_star = res_lbfgs.x
             elif method == "TNC":
-                # Bounces
                 res_tnc = minimize(
                     sw_maxent_irl,
                     theta0,
@@ -384,7 +382,6 @@ class MaxEntEMSolver(EMSolver):
                 )
                 x_star = res_tnc.x
             elif method == "SLSQP":
-                # Smoothly converges
                 res_slsqp = minimize(
                     sw_maxent_irl,
                     theta0,
@@ -397,7 +394,6 @@ class MaxEntEMSolver(EMSolver):
                 )
                 x_star = res_slsqp.x
             elif method == "trust-const":
-                # Bounces
                 res_trust_const = minimize(
                     sw_maxent_irl,
                     theta0,
@@ -411,7 +407,6 @@ class MaxEntEMSolver(EMSolver):
                 x_star = res_trust_const.x
             elif method == "CMA-ES":
                 print("Doing CMA-ES")
-                # Smoothly converges
                 std_dev_init_val = 0.5
                 es = cma.CMAEvolutionStrategy(
                     theta0,
