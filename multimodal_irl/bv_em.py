@@ -496,41 +496,31 @@ class MaxEntEMSolver(EMSolver):
             (float): Log Likelihood of the rollouts under the given mixture model
         """
 
-        weights_rewards = zip(mode_weights, rewards)
-        proc_one = lambda xtr, phi, mode_weight, mode_reward, demonstrations: np.log(
-            mode_weight
-        ) + maxent_path_logprobs(xtr, phi, mode_reward, demonstrations)
+        # Pre-compute path probabilities under each mode (faster this way)
+        path_probs = np.array(
+            [
+                np.exp(maxent_path_logprobs(xtr, phi, reward, demonstrations))
+                for reward in rewards
+            ]
+        )
 
-        path_loglikelihoods = []
-        if self.parallel_executor is None:
-            for mode_weight, mode_reward in weights_rewards:
-                # Add all finite path likelihoods
-                path_loglikelihoods.extend(
-                    proc_one(xtr, phi, mode_weight, mode_reward, demonstrations)
+        trajectory_mixture_lls = []
+        for demo_idx in range(len(demonstrations)):
+            # Sum at this level, then take log at this level
+            trajectory_mixture_lls.append(
+                np.log(
+                    np.sum(
+                        [
+                            mode_weight * path_probs[mode_idx, demo_idx]
+                            for mode_idx, mode_weight in enumerate(mode_weights)
+                        ]
+                    )
                 )
-        else:
-            # Parallelize across modes
-            tasks = {
-                self.parallel_executor.submit(
-                    proc_one, xtr, phi, mode_weight, mode_reward, demonstrations
-                )
-                for (mode_weight, mode_reward) in weights_rewards
-            }
-            for future in futures.as_completed(tasks):
-                # Use arg or result here if desired
-                # arg = tasks[future]
-                path_loglikelihoods.extend(future.result())
-
-        # Drop -inf values
-        path_loglikelihoods = np.array(path_loglikelihoods)
-        if not np.all(np.isfinite(path_loglikelihoods)):
-            warnings.warn(
-                "MaxEntEMSolver:mixture_nll: Some paths have -inf log likelihood - filtering these out"
             )
-        path_loglikelihoods = path_loglikelihoods[np.isfinite(path_loglikelihoods)]
 
-        # Return average over all paths, modes
-        return -1.0 * np.mean(path_loglikelihoods)
+        mixture_ll = np.mean(trajectory_mixture_lls)
+
+        return -1.0 * mixture_ll
 
 
 class MeanOnlyEMSolver(MaxEntEMSolver):
@@ -705,6 +695,8 @@ class MaxLikEMSolver(EMSolver):
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
+
+        raise NotImplementedError
 
         max_path_length = max([len(r) for r in rollouts])
 
