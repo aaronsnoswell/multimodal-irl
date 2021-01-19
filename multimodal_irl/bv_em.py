@@ -354,7 +354,9 @@ class MaxEntEMSolver(EMSolver):
             method="L-BFGS-B",
         ):
             phi_bar = phi.expectation(
-                demonstrations, gamma=xtr.gamma, weights=rollout_weights
+                demonstrations,
+                gamma=xtr.gamma,
+                weights=(rollout_weights / np.sum(rollout_weights)),
             )
 
             if method == "L-BFGS-B":
@@ -469,19 +471,6 @@ class MaxEntEMSolver(EMSolver):
     def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Find the average negative log-likelihood of a MaxEnt mixture model
     
-        This is the average over all paths of the log-likelihood of each path. That is
-    
-        $$
-            \mathcal{L}(D \mid \Theta) =
-                -1 \times \frac{1}{|D|}
-                \sum_{\tau \in \Data}
-                \log
-                \sum_{k=1}^K
-                \alpha_k
-                ~
-                p(\tau \mid \theta_k)
-        $$
-    
         Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
         for that mixture component
     
@@ -545,7 +534,9 @@ class MeanOnlyEMSolver(MaxEntEMSolver):
         rewards = []
         for mode_demo_weights in resp.T:
             phi_bar = phi.expectation(
-                demonstrations, gamma=xtr.gamma, weights=mode_demo_weights
+                demonstrations,
+                gamma=xtr.gamma,
+                weights=(mode_demo_weights / np.sum(mode_demo_weights)),
             )
             rewards.append(Linear(phi_bar))
         return rewards
@@ -654,7 +645,7 @@ class MaxLikEMSolver(EMSolver):
                     xtr,
                     phi,
                     rollouts,
-                    rollout_weights,
+                    rollout_weights / np.sum(rollout_weights),
                     self._boltzman_scale,
                     self._qge_tol,
                 ),
