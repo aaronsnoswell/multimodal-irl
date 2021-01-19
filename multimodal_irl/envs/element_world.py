@@ -17,6 +17,11 @@ from mdp_extras import (
 from mdp_extras.utils import compute_parents_children
 from unimodal_irl.sw_maxent_irl import maxent_ml_path, maxent_path_logprobs
 
+from multimodal_irl.bv_em import MaxEntEMSolver, bv_em
+
+
+from mdp_extras import *
+
 
 class ElementWorldEnv(gym.Env):
 
