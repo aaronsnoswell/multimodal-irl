@@ -65,6 +65,7 @@ def base_config():
     em_nll_tolerance = 1e-5
     max_iterations = 100
     boltzmann_scale = 5.0
+    skip_ml_paths = False
     replicate = 0
 
 
@@ -84,6 +85,7 @@ def element_world_v4(
     em_nll_tolerance,
     max_iterations,
     boltzmann_scale,
+    skip_ml_paths,
     _log,
     _seed,
     _run,
@@ -254,6 +256,7 @@ def element_world_v4(
             init_mode_weights,
             init_rewards,
             solver,
+            skip_ml_paths,
             _log,
             _seed,
         )
@@ -269,6 +272,7 @@ def element_world_v4(
             init_mode_weights,
             init_rewards,
             solver,
+            skip_ml_paths,
             _log,
             _seed,
         )
@@ -321,6 +325,7 @@ def element_world_v4(
         learn_mode_weights,
         learn_rewards,
         solver,
+        skip_ml_paths,
         _log,
         _seed,
     )
@@ -336,6 +341,7 @@ def element_world_v4(
         learn_mode_weights,
         learn_rewards,
         solver,
+        skip_ml_paths,
         _log,
         _seed,
     )
@@ -423,6 +429,7 @@ def element_world_eval(
     mixture_weights,
     rewards,
     solver,
+    skip_ml_paths,
     _log,
     _seed,
 ):
@@ -478,40 +485,44 @@ def element_world_eval(
         mixture_weights, gt_mixture_weights, evd_mat
     )
 
-    _log.info(f"{_seed}: Evaluating: ML Paths")
     ml_paths = []
     pdms = []
     fds = []
-    if isinstance(solver, MaxEntEMSolver):
-        # Get ML paths from MaxEnt mixture
-        ml_paths = element_world_mixture_ml_path(
-            xtr, phi, demos, maxent_ml_path, mixture_weights, rewards
-        )
-    elif isinstance(solver, MaxLikEMSolver):
-        # Get ML paths from MaxLik mixture
-        ml_paths = element_world_mixture_ml_path(
-            xtr, phi, demos, maxlikelihood_ml_path, mixture_weights, rewards
-        )
+    if skip_ml_paths:
+        _log.info(f"{_seed}: Evaluating: Skipping ML Path Evaluations")
+        pass
     else:
-        raise ValueError
+        _log.info(f"{_seed}: Evaluating: ML Paths")
+        if isinstance(solver, MaxEntEMSolver):
+            # Get ML paths from MaxEnt mixture
+            ml_paths = element_world_mixture_ml_path(
+                xtr, phi, demos, maxent_ml_path, mixture_weights, rewards
+            )
+        elif isinstance(solver, MaxLikEMSolver):
+            # Get ML paths from MaxLik mixture
+            ml_paths = element_world_mixture_ml_path(
+                xtr, phi, demos, maxlikelihood_ml_path, mixture_weights, rewards
+            )
+        else:
+            raise ValueError
 
-    _log.info(f"{_seed}: Evaluating: % distance missed")
-    # Measure % Distance Missed of ML paths
-    pdms = np.array(
-        [
-            percent_distance_missed_metric(ml_path, gt_path)
-            for (gt_path, ml_path) in zip(demos, ml_paths)
-        ]
-    )
+        _log.info(f"{_seed}: Evaluating: % distance missed")
+        # Measure % Distance Missed of ML paths
+        pdms = np.array(
+            [
+                percent_distance_missed_metric(ml_path, gt_path)
+                for (gt_path, ml_path) in zip(demos, ml_paths)
+            ]
+        )
 
-    # Measure feature distance of ML paths
-    _log.info(f"{_seed}: Evaluating: feature distance")
-    fds = np.array(
-        [
-            phi.feature_distance(gt_path, ml_path)
-            for (gt_path, ml_path) in zip(demos, ml_paths)
-        ]
-    )
+        # Measure feature distance of ML paths
+        _log.info(f"{_seed}: Evaluating: feature distance")
+        fds = np.array(
+            [
+                phi.feature_distance(gt_path, ml_path)
+                for (gt_path, ml_path) in zip(demos, ml_paths)
+            ]
+        )
 
     return dict(
         nll=nll,
@@ -652,6 +663,12 @@ def main():
         help="Maximum number of EM iterations to perform",
     )
 
+    parser.add_argument(
+        "--skip_ml_paths",
+        action="store_true",
+        help="Skip ML path evaluations (speeds up experiment substantially)",
+    )
+
     args = parser.parse_args()
     print("META: Arguments:", args, flush=True)
 
@@ -665,6 +682,7 @@ def main():
         "initialisation": args.initialisation,
         "em_nll_tolerance": args.em_nll_tolerance,
         "max_iterations": args.max_iterations,
+        "skip_ml_paths": args.skip_ml_paths,
     }
 
     print("META: Configuration: ")
