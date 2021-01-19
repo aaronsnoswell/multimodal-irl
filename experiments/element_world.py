@@ -275,6 +275,7 @@ def element_world_v4(
             skip_ml_paths,
             _log,
             _seed,
+            non_data_perf=init_eval,
         )
 
         # MI-IRL algorithm
@@ -344,6 +345,7 @@ def element_world_v4(
         skip_ml_paths,
         _log,
         _seed,
+        non_data_perf=learn_eval,
     )
 
     out_str = (
@@ -432,6 +434,7 @@ def element_world_eval(
     skip_ml_paths,
     _log,
     _seed,
+    non_data_perf=None,
 ):
     """Evaluate a ElementWorld mixture model
     
@@ -439,12 +442,62 @@ def element_world_eval(
     
     Args:
         TODO
+        non_data_perf (dict): If passed, this dictionary will be used to look up
+            existing performance stats for the evd/ile metric - saves re-computing it
+            across test/training sets.
     
     Returns:
         TODO
     """
     gt_num_clusters = len(gt_mixture_weights)
     num_clusters = len(mixture_weights)
+
+    ### NON-DATA BASED EVALUATIONS =====================================================
+
+    if (
+        (non_data_perf is not None)
+        and ("mcf_evd" in non_data_perf)
+        and ("mcf_ile" in non_data_perf)
+        and ("mcf_evd_flowdict" in non_data_perf)
+        and ("mcf_ile_flowdict" in non_data_perf)
+    ):
+        _log.info(
+            f"{_seed}: Evaluating: Copying Reward Performance Stats from previous evaluation"
+        )
+        mcf_ile = non_data_perf["mcf_ile"]
+        mcf_evd = non_data_perf["mcf_evd"]
+        mcf_evd_flowdict = non_data_perf["mcf_evd_flowdict"]
+        mcf_ile_flowdict = non_data_perf["mcf_ile_flowdict"]
+    else:
+        # Compute ILE, EVD matrices
+        _log.info(f"{_seed}: Evaluating: Reward Performance (ILE/EVD Matrices)")
+        ile_mat = np.zeros((num_clusters, gt_num_clusters))
+        evd_mat = np.zeros((num_clusters, gt_num_clusters))
+        for gt_mode_idx in range(gt_num_clusters):
+            gt_state_value_vector = None
+            for learned_mode_idx in range(num_clusters):
+                ile, evd, gt_state_value_vector = ile_evd(
+                    xtr,
+                    phi,
+                    gt_rewards[gt_mode_idx],
+                    rewards[learned_mode_idx],
+                    ret_gt_value=True,
+                    gt_policy_value=gt_state_value_vector,
+                    vi_kwargs=dict(eps=1e-4),
+                )
+                ile_mat[learned_mode_idx, gt_mode_idx] = ile
+                evd_mat[learned_mode_idx, gt_mode_idx] = evd
+
+        # Measure reward performance
+        _log.info(f"{_seed}: Evaluating: Reward Performance (ILE, EVD)")
+        mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
+            mixture_weights, gt_mixture_weights, ile_mat
+        )
+        mcf_evd, mcf_evd_flowdict = min_cost_flow_error_metric(
+            mixture_weights, gt_mixture_weights, evd_mat
+        )
+
+    ### DATA BASED EVALUATIONS =========================================================
 
     xtr_p, demos_p = padding_trick(xtr, demos)
 
@@ -456,34 +509,6 @@ def element_world_eval(
     _log.info(f"{_seed}: Evaluating: Clustering Performance (NID/ANID)")
     nid = normalized_information_distance(gt_resp, resp)
     anid = adjusted_normalized_information_distance(gt_resp, resp)
-
-    # Compute ILE, EVD matrices
-    _log.info(f"{_seed}: Evaluating: Reward Performance (ILE/EVD Matrices)")
-    ile_mat = np.zeros((num_clusters, gt_num_clusters))
-    evd_mat = np.zeros((num_clusters, gt_num_clusters))
-    for gt_mode_idx in range(gt_num_clusters):
-        gt_state_value_vector = None
-        for learned_mode_idx in range(num_clusters):
-            ile, evd, gt_state_value_vector = ile_evd(
-                xtr,
-                phi,
-                gt_rewards[gt_mode_idx],
-                rewards[learned_mode_idx],
-                ret_gt_value=True,
-                gt_policy_value=gt_state_value_vector,
-                vi_kwargs=dict(eps=1e-4),
-            )
-            ile_mat[learned_mode_idx, gt_mode_idx] = ile
-            evd_mat[learned_mode_idx, gt_mode_idx] = evd
-
-    # Measure reward performance
-    _log.info(f"{_seed}: Evaluating: Reward Performance (ILE, EVD)")
-    mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
-        mixture_weights, gt_mixture_weights, ile_mat
-    )
-    mcf_evd, mcf_evd_flowdict = min_cost_flow_error_metric(
-        mixture_weights, gt_mixture_weights, evd_mat
-    )
 
     ml_paths = []
     pdms = []
