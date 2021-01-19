@@ -471,9 +471,6 @@ class MaxEntEMSolver(EMSolver):
     def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Find the average negative log-likelihood of a MaxEnt mixture model
     
-        Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
-        for that mixture component
-    
         Args:
             xtr (): Extras object
             phi (): Features object
@@ -659,73 +656,60 @@ class MaxLikEMSolver(EMSolver):
 
         return rewards
 
-    def mixture_nll(self, xtr, phi, mode_weights, rewards, rollouts):
-        """Find the average negative log-likelihood of a MaxEnt mixture model
-    
-        This is the average over all paths of the log-likelihood of each path. That is
-    
-        $$
-            \mathcal{L}(D \mid \Theta) =
-                -1 \times \frac{1}{|D|}
-                \sum_{\tau \in \Data}
-                \log
-                \sum_{k=1}^K
-                \alpha_k
-                ~
-                p(\tau \mid \theta_k)
-        $$
-    
-        Where \alpha_k is the weight of mixture component k, and \theta_k is the reward weights
-        for that mixture component
-    
+    def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
+        """Find the average negative log-likelihood of a MaxLikelihood mixture model
+        
         Args:
             env (explicit_env.IExplicitEnv): Environment defining dynamics
-            rollouts (list): List of state-action rollouts
+            demonstrations (list): List of state-action rollouts
             mode_weights (list): List of prior probabilities for each mode
     
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
 
-        raise NotImplementedError
+        # Compute Boltzman probabilities
+        exp_beta_q_stars = [
+            np.exp(self._boltzman_scale * q_vi(xtr, phi, reward)) for reward in rewards
+        ]
+        boltzman_policy_probs = [
+            exp_beta_q_star / np.sum(exp_beta_q_star, axis=1, keepdims=True)
+            for exp_beta_q_star in exp_beta_q_stars
+        ]
 
-        max_path_length = max([len(r) for r in rollouts])
+        # Pre-compute path probabilities under each mode (faster this way)
+        path_qs = np.exp(
+            np.array([xtr.path_log_probability(demo) for demo in demonstrations])
+        )
 
-        log_partition_values = []
-        for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
-            alpha_log = nb_backward_pass_log(
-                xtr.p0s,
-                max_path_length,
-                xtr.t_mat,
-                xtr.gamma,
-                *reward.structured(xtr, phi),
+        path_probs = []
+        for mode_idx, reward in enumerate(rewards):
+            mode_path_probs = []
+            for demo_idx, demo in enumerate(demonstrations):
+                path_prob = path_qs[demo_idx] * np.product(
+                    [boltzman_policy_probs[mode_idx][s, a] for (s, a) in demo[:-1]]
+                )
+                mode_path_probs.append(path_prob)
+            path_probs.append(mode_path_probs)
+        path_probs = np.array(path_probs)
+
+        trajectory_mixture_lls = []
+        for demo_idx in range(len(demonstrations)):
+            # Sum at this level, then take log at this level
+            trajectory_mixture_lls.append(
+                np.log(
+                    np.sum(
+                        [
+                            mode_weight * path_probs[mode_idx, demo_idx]
+                            for mode_idx, mode_weight in enumerate(mode_weights)
+                        ]
+                    )
+                )
             )
-            log_partition_values.append(
-                log_partition(max_path_length, alpha_log, xtr.is_padded)
-            )
 
-        rollout_lls = []
-        for rollout in rollouts:
+        mixture_ll = np.mean(trajectory_mixture_lls)
 
-            # Get path probability under dynamics
-            q_tau = np.exp(xtr.path_log_probability(rollout))
-
-            # Accumulate likelihood for this rollout across modes
-            rollout_likelihood = 0
-            for mode_idx, (mode_weight, reward, log_partition_value) in enumerate(
-                zip(mode_weights, rewards, log_partition_values)
-            ):
-                # Find MaxEnt likelihood of this rollout under this mode
-                path_prob_me = np.exp(trajectory_reward(xtr, phi, reward, rollout))
-                z_theta = np.exp(log_partition_value)
-                l_rollout_mode = mode_weight * q_tau * path_prob_me / z_theta
-                rollout_likelihood += l_rollout_mode
-            rollout_lls.append(np.log(rollout_likelihood))
-
-        # Find average path negative log likelihood
-        nll = -1 * np.mean(rollout_lls)
-
-        return nll
+        return -1.0 * mixture_ll
 
 
 def bv_em(
