@@ -499,11 +499,15 @@ def element_world_eval(
 
     ### DATA BASED EVALUATIONS =========================================================
 
-    xtr_p, demos_p = padding_trick(xtr, demos)
-
     # Measure NLL
     _log.info(f"{_seed}: Evaluating: Measuring NLL")
-    nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
+    if isinstance(solver, MaxEntEMSolver):
+        xtr_p, demos_p = padding_trick(xtr, demos)
+        nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
+    elif isinstance(solver, MaxLikEMSolver):
+        nll = solver.mixture_nll(xtr, phi, mixture_weights, rewards, demos)
+    else:
+        raise ValueError
 
     # Measure clustering performance
     _log.info(f"{_seed}: Evaluating: Clustering Performance (NID/ANID)")
