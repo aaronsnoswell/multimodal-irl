@@ -66,6 +66,7 @@ def base_config():
     max_iterations = 100
     boltzmann_scale = 5.0
     skip_ml_paths = False
+    reward_initialisation = "MLE"
     replicate = 0
 
 
@@ -86,6 +87,7 @@ def element_world_v4(
     max_iterations,
     boltzmann_scale,
     skip_ml_paths,
+    reward_initialisation,
     _log,
     _seed,
     _run,
@@ -153,34 +155,30 @@ def element_world_v4(
     test_gt_resp = np.array(test_gt_resp)
     test_gt_mixture_weights = np.sum(test_gt_resp, axis=0) / num_demos
 
-    def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
-        _log.info(f"{_seed}: Iteration {iteration} ended")
-        _run.log_scalar("training.nll", nll)
-        for mw_idx, mw in enumerate(mode_weights):
-            _run.log_scalar(f"training.mw{mw_idx+1}", mw)
-        for reward_idx, reward in enumerate(rewards):
-            for theta_idx, theta_val in enumerate(reward.theta):
-                _run.log_scalar(f"training.r{reward_idx+1}.t{theta_idx+1}", theta_val)
-
-        # TODO ajs evaluate model here?
-
-    # Initialize solver
-    if algorithm == "MaxEnt":
-        solver = MaxEntEMSolver(post_it=post_em_iteration)
-        xtr_p, train_demos_p = padding_trick(xtr, train_demos)
-        _, test_demos_p = padding_trick(xtr, test_demos)
-    elif algorithm == "MaxLik":
-        solver = MaxLikEMSolver(post_it=post_em_iteration)
-        xtr_p = xtr
-        train_demos_p = train_demos
-        test_demos_p = test_demos
-    elif algorithm == "MeanOnly":
-        solver = MeanOnlyEMSolver(post_it=post_em_iteration)
+    if reward_initialisation == "MLE":
+        _log.info(f"{_seed}: Using MLE to initialise mixture")
+        # We use the current IRL model for Maximum Likelihood initialisation of the
+        # reward parameters
+        if algorithm == "MaxEnt":
+            solver = MaxEntEMSolver()
+            xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+            _, test_demos_p = padding_trick(xtr, test_demos)
+        elif algorithm == "MaxLik":
+            solver = MaxLikEMSolver()
+            xtr_p = xtr
+            train_demos_p = train_demos
+            test_demos_p = test_demos
+        else:
+            raise ValueError
+    elif reward_initialisation == "MeanOnly":
+        _log.info(f"{_seed}: Using MeanOnly to initialise mixture")
+        # We use a 'mean only' solver to do the reward initialisation
+        solver = MeanOnlyEMSolver()
         xtr_p = xtr
         train_demos_p = train_demos
         test_demos_p = test_demos
     else:
-        raise ValueError
+        raise ValueError()
 
     # Initialize Mixture
     t0 = datetime.now()
@@ -249,6 +247,38 @@ def element_world_v4(
     else:
         raise ValueError
 
+    def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
+        _log.info(f"{_seed}: Iteration {iteration} ended")
+        _run.log_scalar("training.nll", nll)
+        for mw_idx, mw in enumerate(mode_weights):
+            _run.log_scalar(f"training.mw{mw_idx+1}", mw)
+        for reward_idx, reward in enumerate(rewards):
+            for theta_idx, theta_val in enumerate(reward.theta):
+                _run.log_scalar(f"training.r{reward_idx+1}.t{theta_idx+1}", theta_val)
+
+        # TODO ajs evaluate model here?
+
+    if reward_initialisation == "MeanOnly":
+        _log.info(
+            f"{_seed}: Initialisation done - switching to MLE reward model for EM alg"
+        )
+        if algorithm == "MaxEnt":
+            solver = MaxEntEMSolver(post_it=post_em_iteration)
+            xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+            _, test_demos_p = padding_trick(xtr, test_demos)
+        elif algorithm == "MaxLik":
+            solver = MaxLikEMSolver(post_it=post_em_iteration)
+            xtr_p = xtr
+            train_demos_p = train_demos
+            test_demos_p = test_demos
+        else:
+            raise ValueError
+    elif reward_initialisation == "MLE":
+        pass
+    else:
+        raise ValueError
+
+    # Evaluate the initial mixture and run EM loop
     if initialisation != "Supervised":
         # Get initial responsibility matrix
         init_resp = solver.estep(
@@ -662,7 +692,7 @@ def main():
         required=False,
         default="MaxEnt",
         type=str,
-        choices=("MaxEnt", "MaxLik", "MeanOnly"),
+        choices=("MaxEnt", "MaxLik"),
         help="IRL model + algorithm to use in EM inner loop",
     )
 
@@ -673,6 +703,15 @@ def main():
         default="Random",
         choices=("Random", "KMeans", "GMM", "Supervised"),
         help="Cluster initialisation method to use",
+    )
+
+    parser.add_argument(
+        "--reward_initialisation",
+        required=False,
+        default="MLE",
+        type=str,
+        choices=("MLE", "MeanOnly"),
+        help="Reward initialisation method to use - defaults to MLE",
     )
 
     parser.add_argument(
@@ -727,6 +766,7 @@ def main():
         "em_nll_tolerance": args.em_nll_tolerance,
         "max_iterations": args.max_iterations,
         "skip_ml_paths": args.skip_ml_paths,
+        "reward_initialisation": args.reward_initialisation,
     }
 
     print("META: Configuration: ")
