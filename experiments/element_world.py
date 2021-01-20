@@ -203,18 +203,33 @@ def element_world_v4(
         # We always have uniform clusters in supervised experiments
         assert num_clusters == num_elements
 
-        # Use ground truth responsibility matrix and cluster weights
-        xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+        if isinstance(solver, MaxEntEMSolver):
+            # Apply padding trick
+            xtr_p, train_demos_p = padding_trick(xtr, train_demos)
 
-        # Learn rewards with ground truth responsibility matrix
-        learn_rewards = solver.mstep(
-            xtr_p, phi, train_gt_resp, train_demos_p, reward_range
-        )
+            # Learn rewards with ground truth responsibility matrix
+            learn_rewards = solver.mstep(
+                xtr_p, phi, train_gt_resp, train_demos_p, reward_range
+            )
 
-        # Compute baseline NLL
-        mixture_nll = solver.mixture_nll(
-            xtr_p, phi, train_gt_mixture_weights, learn_rewards, train_demos_p
-        )
+            # Compute baseline NLL
+            mixture_nll = solver.mixture_nll(
+                xtr_p, phi, train_gt_mixture_weights, learn_rewards, train_demos_p
+            )
+        elif isinstance(solver, MaxLikEMSolver):
+
+            # Learn rewards with ground truth responsibility matrix
+            learn_rewards = solver.mstep(
+                xtr, phi, train_gt_resp, train_demos, reward_range
+            )
+
+            # Compute baseline NLL
+            mixture_nll = solver.mixture_nll(
+                xtr, phi, train_gt_mixture_weights, learn_rewards, train_demos
+            )
+
+        else:
+            raise ValueError()
 
         # No initial solution for supervised experiment
         init_resp = None
