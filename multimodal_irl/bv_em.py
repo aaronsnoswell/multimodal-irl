@@ -42,7 +42,7 @@ class EMSolver(abc.ABC):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
     ):
         """C-tor
         
@@ -149,6 +149,7 @@ class EMSolver(abc.ABC):
             reward_range (tuple): Lower and upper reward function parameter bounds
             
             num_restarts (int): Number of random clusterings to perform
+            mean_center (bool): If true, center feature vectors
             with_resp (bool): Also return responsibility matrix
         
         Returns:
@@ -236,7 +237,7 @@ class MaxEntEMSolver(EMSolver):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
         parallel_executor=None,
         method="L-BFGS-B",
     ):
@@ -528,11 +529,21 @@ class MeanOnlyEMSolver(MaxEntEMSolver):
         Returns:
             (list): List of Linear reward functions
         """
+
+        # First compute the mean over all demonstrations - used for centering
+        phi_mean = phi.expectation(demonstrations, gamma=xtr.gamma)
+
+        feature_vecs = np.array(
+            [phi.expectation([d], gamma=xtr.gamma) for d in demonstrations]
+        )
+        feature_vecs -= phi_mean
+
         rewards = []
         for mode_demo_weights in resp.T:
-            phi_bar = phi.expectation(
-                demonstrations,
-                gamma=xtr.gamma,
+            # Now compute mean using cluster weights
+            phi_bar = np.average(
+                feature_vecs,
+                axis=0,
                 weights=(mode_demo_weights / np.sum(mode_demo_weights)),
             )
             rewards.append(Linear(phi_bar))
@@ -549,7 +560,7 @@ class MaxLikEMSolver(EMSolver):
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
-        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
     ):
         """C-tor
         
@@ -721,13 +732,21 @@ def bv_em(
     reward_range,
     mode_weights=None,
     rewards=None,
-    tolerance=1e-5,
+    nll_tolerance=1e-5,
+    resp_tolerance=1e-5,
     max_iterations=None,
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
     
     See the paper "Apprenticeship learning about multiple intentions." in ICML 2011.
+    
+    Stopping criterion is a logical OR of several options, each of which can be set to
+    `None' to disable that check
+     - NLL tolerance - stop when the NLL change falls below some threshold
+     - Responsibility Matrix tolerance - Stop when the sum of responsibilty matrix entry
+        differences falls below some threshold
+     - Max Iterations - Stop after this many iterations
     
     Args:
         xtr (mpd_extras.DiscreteExplicitExtras): MDP extras
@@ -742,7 +761,8 @@ def bv_em(
             probability simplex.
         rewards (list): List of initial rewards (mdp_extras.Linear) - if None, reward
             parameters are uniform randomly initialized within reward_range
-        tolerance (float): NLL convergence threshold
+        nll_tolerance (float): NLL convergence threshold
+        resp_tolerance (float): Responsibility matrix convergence threshold
         max_iterations (int): Maximum number of iterations (alternate stopping criterion)
 
     Returns:
@@ -778,9 +798,19 @@ def bv_em(
         nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
         nll_history.append(nll)
 
+        nll_delta = np.nan
+        if len(nll_history) >= 2:
+            # Check NLL delta
+            nll_delta = np.diff(nll_history)[-1]
+
         # E-step - update responsibility matrix, mixture component weights
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
         resp_history.append(resp)
+
+        resp_delta = np.nan
+        if len(resp_history) >= 2:
+            # Check Responsibility matrix delta
+            resp_delta = np.sum(np.abs(resp_history[-1] - resp_history[-2]))
 
         mode_weights = np.sum(resp, axis=0) / len(rollouts)
         mode_weights_history.append(mode_weights)
@@ -790,31 +820,43 @@ def bv_em(
         rewards_history.append(rewards)
 
         # Call user post-iteration callback
-        solver.post_it(solver, iteration, resp, mode_weights, rewards, nll)
+        solver.post_it(
+            solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta
+        )
 
         # Edge case for only one cluster
         if num_modes == 1:
             reason = "Only one cluster to learn"
             break
 
+        if len(resp_history) >= 2:
+            # Check Responsibility matrix delta
+            resp_delta = np.sum(np.abs(resp_history[-1] - resp_history[-2]))
+
+            if resp_tolerance is not None and resp_delta <= resp_tolerance:
+                # Responsibility matrix has converged (solution is epsilon optimal)
+                reason = "Responsibility matrix has converged: \sum_i, sum_k |u_{ik}^{t+1} - u_{ik}^t| <= tol"
+                break
+
         if len(nll_history) >= 2:
             # Check NLL delta
-            nll_deltas = np.diff(nll_history)
-            if np.abs(nll_deltas[-1]) <= tolerance:
+            nll_delta = np.diff(nll_history)[-1]
+            if nll_tolerance is not None and np.abs(nll_delta) <= nll_tolerance:
                 # NLL has converged
                 reason = "NLL converged: |NLL delta| <= tol"
                 break
-            elif not np.all(nll_deltas <= 0):
+
+            if not nll_delta <= 0.0:
                 warnings.warn(
-                    f"NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding. NLL Deltas = {nll_deltas}"
+                    f"NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding. NLL Delta = {nll_delta}"
                 )
-                reason = "NLL is not monotonically decreasing"
-                iteration -= 1
-                resp_history = resp_history[:-1]
-                mode_weights_history = mode_weights_history[:-1]
-                rewards_history = rewards_history[:-1]
-                nll_history = nll_history[:-1]
-                break
+                # reason = "NLL is not monotonically decreasing"
+                # iteration -= 1
+                # resp_history = resp_history[:-1]
+                # mode_weights_history = mode_weights_history[:-1]
+                # rewards_history = rewards_history[:-1]
+                # nll_history = nll_history[:-1]
+                # break
 
         # Check for max iterations stopping condition
         if max_iterations is not None and iteration >= max_iterations - 1:
