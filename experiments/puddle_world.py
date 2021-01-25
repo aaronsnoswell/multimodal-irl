@@ -307,7 +307,7 @@ def canonical_puddle_world(
             reward_range,
             mode_weights=st_mode_weights,
             rewards=st_rewards,
-            tolerance=tolerance,
+            nll_tolerance=tolerance,
         )
 
     t1 = datetime.now()

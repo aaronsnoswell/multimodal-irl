@@ -62,10 +62,11 @@ def base_config():
     max_demonstration_length = 50
     reward_range = (-10.0, 0.0)
     num_init_restarts = 5000
-    em_nll_tolerance = 1e-5
+    em_nll_tolerance = 0.0
+    em_resp_tolerance = 1e-4
     max_iterations = 100
     boltzmann_scale = 5.0
-    skip_ml_paths = False
+    skip_ml_paths = True
     reward_initialisation = "MLE"
     replicate = 0
 
@@ -84,6 +85,7 @@ def element_world_v4(
     reward_range,
     num_init_restarts,
     em_nll_tolerance,
+    em_resp_tolerance,
     max_iterations,
     boltzmann_scale,
     skip_ml_paths,
@@ -101,7 +103,6 @@ def element_world_v4(
     )
     xtr, phi, gt_rewards = element_world_extras(env)
 
-    _log.info(f"{_seed}: Generating rollouts...")
     mode_proportions = geometric_distribution(demo_skew, num_elements)
     demos_per_mode = np.floor(mode_proportions * num_demos)
 
@@ -156,7 +157,6 @@ def element_world_v4(
     test_gt_mixture_weights = np.sum(test_gt_resp, axis=0) / num_demos
 
     if reward_initialisation == "MLE":
-        _log.info(f"{_seed}: Using MLE to initialise mixture")
         # We use the current IRL model for Maximum Likelihood initialisation of the
         # reward parameters
         if algorithm == "MaxEnt":
@@ -171,7 +171,6 @@ def element_world_v4(
         else:
             raise ValueError
     elif reward_initialisation == "MeanOnly":
-        _log.info(f"{_seed}: Using MeanOnly to initialise mixture")
         # We use a 'mean only' solver to do the reward initialisation
         solver = MeanOnlyEMSolver()
         xtr_p = xtr
@@ -247,34 +246,31 @@ def element_world_v4(
     else:
         raise ValueError
 
-    def post_em_iteration(solver, iteration, resp, mode_weights, rewards, nll):
+    def post_em_iteration(
+        solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta
+    ):
         _log.info(f"{_seed}: Iteration {iteration} ended")
         _run.log_scalar("training.nll", nll)
+        _run.log_scalar("training.nll_delta", nll_delta)
+        _run.log_scalar("training.resp_delta", resp_delta)
         for mw_idx, mw in enumerate(mode_weights):
             _run.log_scalar(f"training.mw{mw_idx+1}", mw)
         for reward_idx, reward in enumerate(rewards):
             for theta_idx, theta_val in enumerate(reward.theta):
                 _run.log_scalar(f"training.r{reward_idx+1}.t{theta_idx+1}", theta_val)
 
-        # TODO ajs evaluate model here?
-
-    if reward_initialisation == "MeanOnly":
-        _log.info(
-            f"{_seed}: Initialisation done - switching to MLE reward model for EM alg"
-        )
-        if algorithm == "MaxEnt":
-            solver = MaxEntEMSolver(post_it=post_em_iteration)
-            xtr_p, train_demos_p = padding_trick(xtr, train_demos)
-            _, test_demos_p = padding_trick(xtr, test_demos)
-        elif algorithm == "MaxLik":
-            solver = MaxLikEMSolver(post_it=post_em_iteration)
-            xtr_p = xtr
-            train_demos_p = train_demos
-            test_demos_p = test_demos
-        else:
-            raise ValueError
-    elif reward_initialisation == "MLE":
-        pass
+    _log.info(
+        f"{_seed}: Initialisation done - switching to MLE reward model for EM alg"
+    )
+    if algorithm == "MaxEnt":
+        solver = MaxEntEMSolver(post_it=post_em_iteration)
+        xtr_p, train_demos_p = padding_trick(xtr, train_demos)
+        _, test_demos_p = padding_trick(xtr, test_demos)
+    elif algorithm == "MaxLik":
+        solver = MaxLikEMSolver(post_it=post_em_iteration)
+        xtr_p = xtr
+        train_demos_p = train_demos
+        test_demos_p = test_demos
     else:
         raise ValueError
 
@@ -302,8 +298,6 @@ def element_world_v4(
             init_rewards,
             solver,
             skip_ml_paths,
-            _log,
-            _seed,
         )
         _log.info(f"{_seed}: Evaluating initial solution (train set)")
         init_eval_train = element_world_eval(
@@ -318,8 +312,6 @@ def element_world_v4(
             init_rewards,
             solver,
             skip_ml_paths,
-            _log,
-            _seed,
             non_data_perf=init_eval,
         )
 
@@ -341,7 +333,8 @@ def element_world_v4(
             reward_range,
             mode_weights=init_mode_weights,
             rewards=init_rewards,
-            tolerance=em_nll_tolerance,
+            nll_tolerance=em_nll_tolerance,
+            resp_tolerance=em_resp_tolerance,
             max_iterations=max_iterations,
         )
         _log.info(f"{_seed}: BV-EM Loop terminated, reason = {train_reason}")
@@ -372,8 +365,6 @@ def element_world_v4(
         learn_rewards,
         solver,
         skip_ml_paths,
-        _log,
-        _seed,
     )
     _log.info(f"{_seed}: Evaluating final mixture (train set)")
     learn_eval_train = element_world_eval(
@@ -388,8 +379,6 @@ def element_world_v4(
         learn_rewards,
         solver,
         skip_ml_paths,
-        _log,
-        _seed,
         non_data_perf=learn_eval,
     )
 
@@ -398,8 +387,7 @@ def element_world_v4(
         "NLL: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
         "ANID: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
         "EVD: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
-        "{}\n"
-        "{}\n"
+        "Mode Weights: {} -> {}\n"
         "===================================================\n".format(
             _seed,
             train_iterations,
@@ -477,8 +465,6 @@ def element_world_eval(
     rewards,
     solver,
     skip_ml_paths,
-    _log,
-    _seed,
     non_data_perf=None,
 ):
     """Evaluate a ElementWorld mixture model
@@ -506,16 +492,12 @@ def element_world_eval(
         and ("mcf_evd_flowdict" in non_data_perf)
         and ("mcf_ile_flowdict" in non_data_perf)
     ):
-        _log.info(
-            f"{_seed}: Evaluating: Copying Reward Performance Stats from previous evaluation"
-        )
         mcf_ile = non_data_perf["mcf_ile"]
         mcf_evd = non_data_perf["mcf_evd"]
         mcf_evd_flowdict = non_data_perf["mcf_evd_flowdict"]
         mcf_ile_flowdict = non_data_perf["mcf_ile_flowdict"]
     else:
         # Compute ILE, EVD matrices
-        _log.info(f"{_seed}: Evaluating: Reward Performance (ILE/EVD Matrices)")
         ile_mat = np.zeros((num_clusters, gt_num_clusters))
         evd_mat = np.zeros((num_clusters, gt_num_clusters))
         for gt_mode_idx in range(gt_num_clusters):
@@ -534,7 +516,6 @@ def element_world_eval(
                 evd_mat[learned_mode_idx, gt_mode_idx] = evd
 
         # Measure reward performance
-        _log.info(f"{_seed}: Evaluating: Reward Performance (ILE, EVD)")
         mcf_ile, mcf_ile_flowdict = min_cost_flow_error_metric(
             mixture_weights, gt_mixture_weights, ile_mat
         )
@@ -545,7 +526,6 @@ def element_world_eval(
     ### DATA BASED EVALUATIONS =========================================================
 
     # Measure NLL
-    _log.info(f"{_seed}: Evaluating: Measuring NLL")
     if isinstance(solver, MaxEntEMSolver):
         xtr_p, demos_p = padding_trick(xtr, demos)
         nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
@@ -555,7 +535,6 @@ def element_world_eval(
         raise ValueError
 
     # Measure clustering performance
-    _log.info(f"{_seed}: Evaluating: Clustering Performance (NID/ANID)")
     nid = normalized_information_distance(gt_resp, resp)
     anid = adjusted_normalized_information_distance(gt_resp, resp)
 
@@ -563,10 +542,8 @@ def element_world_eval(
     pdms = []
     fds = []
     if skip_ml_paths:
-        _log.info(f"{_seed}: Evaluating: Skipping ML Path Evaluations")
         pass
     else:
-        _log.info(f"{_seed}: Evaluating: ML Paths")
         if isinstance(solver, MaxEntEMSolver):
             # Get ML paths from MaxEnt mixture
             ml_paths = element_world_mixture_ml_path(
@@ -580,7 +557,6 @@ def element_world_eval(
         else:
             raise ValueError
 
-        _log.info(f"{_seed}: Evaluating: % distance missed")
         # Measure % Distance Missed of ML paths
         pdms = np.array(
             [
@@ -590,7 +566,6 @@ def element_world_eval(
         )
 
         # Measure feature distance of ML paths
-        _log.info(f"{_seed}: Evaluating: feature distance")
         fds = np.array(
             [
                 phi.feature_distance(gt_path, ml_path)
@@ -733,9 +708,17 @@ def main():
     parser.add_argument(
         "--em_nll_tolerance",
         required=False,
-        default=1e-5,
+        default=0.0,
         type=float,
-        help="EM convergence tolerance",
+        help="EM convergence tolerance for mixture NLL change",
+    )
+
+    parser.add_argument(
+        "--em_resp_tolerance",
+        required=False,
+        default=1e-4,
+        type=float,
+        help="EM convergence tolerance for the responsibility matrix entries",
     )
 
     parser.add_argument(
@@ -747,9 +730,9 @@ def main():
     )
 
     parser.add_argument(
-        "--skip_ml_paths",
+        "--eval_ml_paths",
         action="store_true",
-        help="Skip ML path evaluations (speeds up experiment substantially)",
+        help="Perform ML path evaluations (speeds up experiment substantially)",
     )
 
     args = parser.parse_args()
@@ -763,10 +746,11 @@ def main():
         "wind": args.wind,
         "algorithm": args.algorithm,
         "initialisation": args.initialisation,
-        "em_nll_tolerance": args.em_nll_tolerance,
-        "max_iterations": args.max_iterations,
-        "skip_ml_paths": args.skip_ml_paths,
         "reward_initialisation": args.reward_initialisation,
+        "em_nll_tolerance": args.em_nll_tolerance,
+        "em_resp_tolerance": args.em_resp_tolerance,
+        "max_iterations": args.max_iterations,
+        "skip_ml_paths": not args.eval_ml_paths,
     }
 
     print("META: Configuration: ")
