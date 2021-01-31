@@ -1,14 +1,11 @@
 from gym.envs.registration import register
 
-from .puddle_world import (
-    PuddleWorldEnv,
-    CanonicalPuddleWorldEnv,
-    SmallPuddleWorldEnv,
-    puddle_world_extras,
-)
+from .puddle_world import *
+from .element_world import *
 
 register(
-    id="PuddleWorld-v0", entry_point="puddle_world.envs:PuddleWorldEnv",
+    id="PuddleWorld-v0",
+    entry_point="puddle_world.envs:PuddleWorldEnv",
 )
 
 register(
@@ -17,5 +14,6 @@ register(
 )
 
 register(
-    id="SmallPuddleWorld-v0", entry_point="puddle_world.envs:SmallPuddleWorldEnv",
+    id="SmallPuddleWorld-v0",
+    entry_point="puddle_world.envs:SmallPuddleWorldEnv",
 )
