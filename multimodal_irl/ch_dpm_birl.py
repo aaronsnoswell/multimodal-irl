@@ -24,27 +24,24 @@ def cluster_compaction(clusters, *args):
     old_clusters = clusters.copy()
     num_actual_clusters = len(set(clusters))
 
-    new_args = list(args)
-    if max(clusters) != num_actual_clusters - 1:
+    # Compute renaming map
+    cluster_rename_map = {
+        k: v for k, v in zip(sorted(set(clusters)), range(num_actual_clusters))
+    }
+    cluster_rename_reverse_map = {v: k for k, v in cluster_rename_map.items()}
 
-        # Compute renaming map
-        cluster_rename_map = {
-            k: v for k, v in zip(sorted(set(clusters)), range(num_actual_clusters))
-        }
-        cluster_rename_reverse_map = {v: k for k, v in cluster_rename_map.items()}
+    # Re-name clusters
+    clusters = np.array([cluster_rename_map[c] for c in old_clusters])
 
-        # Re-name clusters
-        clusters = np.array([cluster_rename_map[c] for c in old_clusters])
-
-        # Also re-order any other passed lists
-        new_args = []
-        for arg in args:
-            new_arg = []
-            for cluster in sorted(set(clusters)):
-                new_arg.append(arg[cluster_rename_reverse_map[cluster]])
-            if isinstance(arg, np.ndarray):
-                new_arg = np.array(new_arg)
-            new_args.append(new_arg)
+    # Also re-order any other passed lists
+    new_args = []
+    for arg in args:
+        new_arg = []
+        for cluster in sorted(set(clusters)):
+            new_arg.append(arg[cluster_rename_reverse_map[cluster]])
+        if isinstance(arg, np.ndarray):
+            new_arg = np.array(new_arg)
+        new_args.append(new_arg)
 
     if len(args) == 0:
         return clusters
@@ -57,8 +54,7 @@ def log_urpd(
     reward,
     q_star,
     demos,
-    reward_mean,
-    reward_covariance_diag,
+    reward_prior_log_pdf,
     reward_prior_confidence,
 ):
     """Compute the log of the un-normalized reward posterior distribution
@@ -68,8 +64,7 @@ def log_urpd(
         reward (numpy array): Reward vector
         q_star (numpy array): Optimal Q function for reward parameters \theta
         demos (list): List of (s, a) demos
-        reward_mean ():
-        reward_covariance_diag ():
+        reward_prior_log_pdf (callable):
         reward_prior_confidence (float): Boltzmann policy confidence factor
 
     Returns:
@@ -79,7 +74,7 @@ def log_urpd(
 
     # Add contribution from demos in this cluster
     for cluster_demo in demos:
-        # XXX ajs Skipping end state means we don't catch reward contribution from goal states!!!
+        # XXX ajs Skipping end state means we don't catch reward contribution from goal states?
         for t, (st, at) in enumerate(cluster_demo[:-1]):
             aprime_norm_factor = np.log(
                 np.sum(
@@ -92,11 +87,7 @@ def log_urpd(
             rlp_nonorm += reward_prior_confidence * q_star[st, at] - aprime_norm_factor
 
     # Add contribution from reward prior
-    for reward_dim in range(len(reward)):
-        theta_d = reward[reward_dim]
-        mu_d = reward_mean[reward_dim]
-        sigma_d = reward_covariance_diag[reward_dim]
-        rlp_nonorm += np.log(norm(mu_d, sigma_d).pdf(theta_d))
+    rlp_nonorm += reward_prior_log_pdf(reward)
 
     return rlp_nonorm
 
@@ -106,8 +97,7 @@ def log_urpd_grad(
     reward,
     q_grad,
     demos,
-    reward_mean,
-    reward_covariance_diag,
+    reward_prior_log_pdf_grad,
     reward_prior_confidence,
 ):
     """Compute the gradient of the log of the un-normalized reward posterior distribution
@@ -117,8 +107,8 @@ def log_urpd_grad(
         reward (numpy array): Reward vector
         q_grad (numpy array): Gradient of Q function wrt. reward parameters \theta
         demos (list): List of (s, a) demos
-        reward_mean ():
-        reward_covariance_diag ():
+        reward_prior_log_pdf_grad (callable): Callable that returns the reward prior log pdf gradient wrt. reward
+            parameters
         reward_prior_confidence (float): Boltzmann policy confidence factor
 
     Returns:
@@ -131,7 +121,7 @@ def log_urpd_grad(
 
         # Add contribution from demos in this cluster
         for cluster_demo in demos:
-            # XXX ajs Skipping end state means we don't catch reward contribution from goal states!!!
+            # XXX ajs Skipping end state means we don't catch reward contribution from goal states?
             for t, (st, at) in enumerate(cluster_demo[:-1]):
                 aprime_norm_factor = [
                     reward_prior_confidence * q_grad[st, aprime, :]
@@ -143,23 +133,8 @@ def log_urpd_grad(
                 )
                 log_urpd_grad += contrib
 
-        # Add contributions from reward prior
-        for reward_dim in range(len(reward)):
-            theta_d = reward[reward_dim]
-            mu_d = reward_mean[reward_dim]
-            sigma_d = reward_covariance_diag[reward_dim]
-
-            g_of_x = norm(mu_d, sigma_d).pdf(theta_d)
-            f_prime = 1.0 / g_of_x
-
-            a = -1.0 / sigma_d / np.sqrt(2 * np.pi)
-            b = (theta_d - mu_d) / sigma_d
-            c = np.exp(-0.5 * ((theta_d - mu_d) / sigma_d) ** 2)
-            g_prime = a * b * c
-
-            contrib = f_prime * g_prime
-
-            log_urpd_grad[reward_dim] += contrib
+    # Add contributions from reward prior
+    log_urpd_grad += reward_prior_log_pdf_grad(reward)
 
     return log_urpd_grad
 
@@ -187,35 +162,74 @@ def log_g(r1, log_urpd_grad_r1, r2, scale):
     )
 
 
-TARGET_REWARD_ACCEPTANCE_PROB_RATIO = 0.574
+def reward_improvement_step(reward, reward_log_gradient, scale):
+    """Take a single step of IRL to improve a reward function
+
+    Args:
+
+    Returns:
+        (numpy array):
+    """
+    reward_new = (
+        reward
+        + scale ** 2 / 2.0 * reward_log_gradient
+        + scale * norm(0, 1).rvs(len(reward))
+    )
+    return reward_new
+
+
+def demo_reallocation_probabilities(all_clusters, current_cluster, concentration=1.0):
+    """Get vector of cluster re-allocation probabilities
+
+    Args:
+        all_clusters (list): The list of all demonstration clusters (one int per demo)
+        current_cluster (int): The cluster of the trajectory we are currently re-allocating
+        concentration (float): Dirichlet concentration parameter 'alpha'
+    """
+    cluster_probs = [
+        np.sum(all_clusters == cluster_idx) for cluster_idx in set(all_clusters)
+    ]
+    cluster_probs[current_cluster] -= 1
+    cluster_probs.append(concentration)
+    cluster_probs = np.array(cluster_probs) / np.sum(cluster_probs)
+    return cluster_probs
 
 
 def ch_dpm_birl(
     xtr,
     phi,
     demonstrations,
-    max_clusters,
-    reward_dimension,
+    initial_clusters,
+    initial_rewards,
     max_iterations,
-    cluster_prior_concentration=1.0,
-    reward_prior_mean=0.0,
-    reward_prior_covariance=1.0,
+    reward_prior_sample,
+    reward_prior_log_pdf,
+    reward_prior_log_pdf_grad,
+    dirichlet_prior_concentration=1.0,
     reward_prior_confidence=1.0,
     langevin_scale_param=0.001,
     reward_bounds=(None, None),
 ):
     """A Metropolis Hastings algorithm for DPM-BIRL
 
-    Args:
-        demonstrations (list): List of (s, a) demonstration trajectories
-        max_clusters (int): Maximum number of clusters to learn
-        reward_dimension (int): Number of of reward function parameters
-        max_iterations (int): Maximum number of MH iterations
+    TODO check this implementation against the following;
+     * https://github.com/erensezener/IRL_Algorithms/tree/ea19532d61f229f03e254f1ba938deb814e2aca7/irl_multiple_experts/DPM_BIRL
+     * https://github.com/s-arora-1987/sawyer_i2rl_project_workspace
 
-        cluster_prior_concentration (float): Dirichlet distribution concentration
+    Args:
+        xtr (mdp_extras.Extras): MDP Extras
+        phi (mdp_extras.FeatureFunction): Feature function object
+        demonstrations (list): List of (s, a) demonstration trajectories
+        initial_clusters (list): Initial cluster allocations (one int for each demonstration)
+        initial_rewards (numpy array): Array of initial reward parameters - one row for each initial reward function
+        max_iterations (int): Maximum number of MH iterations
+        reward_prior_sample (callable): A lambda that returns a single sample from the reward prior
+        reward_prior_log_pdf (callable): A lambda that returns the reward prior log pdf for a reward parameter vector
+        reward_prior_log_pdf_grad (callable): A lambda that returns the reward prior log pdf gradient wrt. a reward
+            vector
+
+        dirichlet_prior_concentration (float): Dirichlet distribution concentration
             parameter - set to 1.0 for uninformed prior
-        reward_prior_mean (float): Reward prior mean
-        reward_prior_covariance (float): Reward prior covariance
         reward_prior_confidence (float): Boltzmann confidence parameter for MaxLikelihood IRL
             model
         langevin_scale_param (float): Positive scale for the Langevin dynamics step size - should be
@@ -225,69 +239,23 @@ def ch_dpm_birl(
             remove that reward bound.
 
     Returns:
-        TODO
+        (numpy array): Cluster indices for each demonstration
+        (numpy array): Array of learned reward functions
     """
 
-    num_demos = len(demonstrations)
+    assert (
+        len(initial_rewards.shape) > 1
+    ), "Passed initial rewards must be two-dimensional"
 
-    # TODO ajs 28/Jan/21 Initialize clusters and rewards arbitrarily (possibly from an argument)
-    # For MCMC algorithms, convergence is guaranteed, regardless of initialisation
+    # THis is the optimal acceptance ratio for Langevin dynamics MH-MCMC (see paper by R & R).
+    TARGET_REWARD_ACCEPTANCE_PROB_RATIO = 0.574
 
-    # Initialize clusters from prior
-    cluster_prior = dirichlet(
-        np.ones(max_clusters) * cluster_prior_concentration / max_clusters
-    )
-    _cluster_sizes = multinomial(num_demos, *cluster_prior.rvs(1)).rvs(1)[0]
-    clusters = []
-    for cluster_idx, cluster_size in enumerate(_cluster_sizes):
-        for _ in range(cluster_size):
-            clusters.append(cluster_idx)
-    clusters = np.array(clusters)
-
-    # Drop any empty clusters for efficiency
-    clusters = cluster_compaction(clusters)
-
+    # Sanitize initial clusters and rewards
+    clusters = cluster_compaction(initial_clusters)
     print("Initial clusters:")
     print(clusters)
 
-    # Initialise rewards from prior
-    reward_prior_mean = np.array(reward_prior_mean)
-    if len(reward_prior_mean.shape) == 0:
-        # Interpret as constant vector value
-        reward_prior_mean = np.ones(reward_dimension) * reward_prior_mean
-    elif len(reward_prior_covariance.shape) == 1:
-        # Interpret as actual mean vector
-        assert len(reward_prior_mean) == reward_dimension
-        pass
-    else:
-        raise ValueError
-
-    reward_prior_covariance = np.array(reward_prior_covariance)
-    if len(reward_prior_covariance.shape) == 0:
-        # Interpret covariance parameter as a diagonal cov matrix scale factor
-        reward_prior_covariance = np.eye(reward_dimension) * reward_prior_covariance
-    elif len(reward_prior_covariance.shape) == 1:
-        # Interpret covariance parameter as a covariance matrix diagonal
-        assert len(reward_prior_covariance) == reward_dimension
-        reward_prior_covariance = np.diag(reward_prior_covariance)
-    elif len(reward_prior_covariance.shape) == 2:
-        # Interpret covariance parameter as full covariance matrix
-        raise NotImplementedError(
-            "Langevin gradient calculations not supported for covariance matrices"
-        )
-    else:
-        raise ValueError
-    reward_prior = multivariate_normal(
-        mean=reward_prior_mean, cov=reward_prior_covariance
-    )
-    reward_prior_covariance_diag = np.diag(reward_prior_covariance)
-    rewards = reward_prior.rvs(len(set(clusters)))
-    if len(set(clusters)) == 1:
-        rewards = np.array([rewards])
-
-    # Apply reward constraints here - projection into a box constraint is truncation
-    rewards = np.clip(rewards, *reward_bounds)
-
+    rewards = np.clip(initial_rewards, *reward_bounds)
     print("Initial Rewards:")
     print(rewards)
 
@@ -307,26 +275,15 @@ def ch_dpm_birl(
         # We assume the list of clusters is always compact
         print("Updating demonstration memberships...")
         for demo_idx, demo in enumerate(demonstrations):
-            # Update cluster assignment for this demo
             demo_cluster = clusters[demo_idx]
             demo_cluster_boltzmann_policy = boltzmann_policies[demo_cluster]
 
+            # TODO ajs sample new cluster assignment from the full conditional posterior
+
             # Sample a new cluster for this trajectory from Eq 5
-            # Count how many trajectories are in each cluster, excluding the current trajectory
-            cluster_counts = [
-                np.sum(clusters == cluster_idx) for cluster_idx in set(clusters)
-            ]
-            cluster_counts[demo_cluster] -= 1
-
-            # Convert cluster counts to cluster probabilities, including the possibility of a new cluster
-            cluster_probs = cluster_counts.copy()
-            cluster_probs.append(cluster_prior_concentration)
-            cluster_probs = np.array(cluster_probs)
-            cluster_probs /= np.sum(cluster_probs)
-
-            # Sample new cluster assignment
-            # TODO ajs sample new cluster assignment from the full conditional posterior - it's
-            # not that much more expensive, and will converge faster
+            cluster_probs = demo_reallocation_probabilities(
+                clusters, demo_cluster, dirichlet_prior_concentration
+            )
             demo_cluster_new = np.random.choice(
                 list(range(len(cluster_probs))), p=cluster_probs
             )
@@ -335,15 +292,11 @@ def ch_dpm_birl(
                 # We didn't move the demonstration - nothing doing
                 continue
             elif demo_cluster_new not in clusters:
-                # We selected a new/empty cluster, sample a new reward function from the prior
-                demo_cluster_new_reward = reward_prior.rvs(1)
-
-                # Apply reward bound
+                # We selected a new/empty cluster, sample a new reward function from the prior and apply bounds
+                demo_cluster_new_reward = reward_prior_sample()
                 demo_cluster_new_reward = np.clip(
                     demo_cluster_new_reward, *reward_bounds
                 )
-
-                # Solve for new reward's boltzmann policy
                 demo_cluster_boltzmann_policy_new = BoltzmannExplorationPolicy(
                     q_vi(xtr, phi, Linear(demo_cluster_new_reward)),
                     reward_prior_confidence,
@@ -421,8 +374,7 @@ def ch_dpm_birl(
                 reward,
                 q_star_grad,
                 demos,
-                reward_prior_mean,
-                reward_prior_covariance_diag,
+                reward_prior_log_pdf_grad,
                 reward_prior_confidence,
             )
             new_reward = reward_improvement_step(
@@ -442,8 +394,7 @@ def ch_dpm_birl(
                 new_reward,
                 new_q_star,
                 demos,
-                reward_prior_mean,
-                reward_prior_covariance_diag,
+                reward_prior_log_pdf,
                 reward_prior_confidence,
             )
             new_reward_log_grad = log_urpd_grad(
@@ -451,8 +402,7 @@ def ch_dpm_birl(
                 new_reward,
                 new_q_grad,
                 demos,
-                reward_prior_mean,
-                reward_prior_covariance_diag,
+                reward_prior_log_pdf_grad,
                 reward_prior_confidence,
             )
             new_reward_log_g = log_g(
@@ -464,8 +414,7 @@ def ch_dpm_birl(
                 reward,
                 q_star,
                 demos,
-                reward_prior_mean,
-                reward_prior_covariance_diag,
+                reward_prior_log_pdf,
                 reward_prior_confidence,
             )
             reward_log_g = log_g(
@@ -510,27 +459,11 @@ def ch_dpm_birl(
         print(rewards)
 
         print(
-            f"Mean log acceptance ratio is {np.mean(log_acceptance_probs)} or {np.exp(np.mean(log_acceptance_probs))} - target is {TARGET_REWARD_ACCEPTANCE_PROB_RATIO}"
+            f"Mean acceptance ratio is {np.exp(np.mean(log_acceptance_probs))} - target is {TARGET_REWARD_ACCEPTANCE_PROB_RATIO}"
         )
 
     # Return learned reward ensemble
-    return rewards
-
-
-def reward_improvement_step(reward, reward_log_gradient, scale):
-    """Take a single step of IRL to improve a reward function
-
-    Args:
-
-    Returns:
-        (numpy array):
-    """
-    reward_new = (
-        reward
-        + scale ** 2 / 2.0 * reward_log_gradient
-        + scale * norm(0, 1).rvs(len(reward))
-    )
-    return reward_new
+    return clusters, rewards
 
 
 def main():
@@ -539,44 +472,85 @@ def main():
     from mdp_extras import q_vi, OptimalPolicy
     from multimodal_irl.envs.element_world import ElementWorldEnv, element_world_extras
 
-    import random
+    demos_per_mode = 10
 
-    random.seed(1337)
-    np.random.seed(1337)
-
-    rollouts_per_mode = 10
-
-    num_elements = 2
-    env = ElementWorldEnv(num_elements=num_elements, wind=1.0)
+    num_elements = 4
+    env = ElementWorldEnv(num_elements=num_elements, wind=0.1)
     xtr, phi, rewards_gt = element_world_extras(env)
     demos = []
     for reward in rewards_gt:
         q_star = q_vi(xtr, phi, reward)
         pi_star = OptimalPolicy(q_star)
-        cluster_demos = pi_star.get_rollouts(env, rollouts_per_mode)
+        cluster_demos = pi_star.get_rollouts(env, demos_per_mode)
         demos.extend(cluster_demos)
-
-    print(demos)
 
     print("GT Rewards:")
     print(np.array([r.theta for r in rewards_gt]))
 
-    k = num_elements
+    # Algorithm hyper-params
+    concentration = 1.0
+    max_initial_clusters = num_elements
+    reward_mean = np.mean(rewards_gt[0].theta) * np.ones_like(rewards_gt[0].theta)
+    reward_covariance = np.var(rewards_gt[0].theta) * np.ones_like(rewards_gt[0].theta)
     max_iterations = 1000
+    reward_bounds = (-10.0, 0.0)
+
+    # Initialise clusters
+    initial_clusters = []
+    for cluster_idx, cluster_size in enumerate(
+        multinomial(
+            len(demos),
+            *dirichlet(
+                np.ones(max_initial_clusters) * concentration / max_initial_clusters
+            ).rvs(1),
+        ).rvs(1)[0]
+    ):
+        for _ in range(cluster_size):
+            initial_clusters.append(cluster_idx)
+    initial_clusters = cluster_compaction(np.array(initial_clusters))
+    num_initial_clusters = len(set(initial_clusters))
+
+    # Define the reward prior and associated access functions
+    reward_prior = multivariate_normal(mean=reward_mean, cov=reward_covariance)
+    reward_prior_sample = lambda: reward_prior.rvs(1)
+    reward_prior_log_pdf = lambda theta: reward_prior.logpdf(theta)
+    reward_prior_log_pdf_grad = lambda theta: np.array(
+        [
+            (1.0 / norm(mu_d, sigma_d).pdf(theta_d))
+            * (-1.0 / sigma_d / np.sqrt(2 * np.pi))
+            * ((theta_d - mu_d) / sigma_d)
+            * (np.exp(-0.5 * ((theta_d - mu_d) / sigma_d) ** 2))
+            for reward_dim, (theta_d, mu_d, sigma_d) in enumerate(
+                zip(theta, reward_mean, reward_covariance)
+            )
+        ]
+    )  # Believe it or not, this computes the derivative of the multivariate normal log pdf (with diagonal covariance)
+
+    # Initialise rewards
+    initial_rewards = np.clip(reward_prior.rvs(num_initial_clusters), *reward_bounds)
+    if len(set(initial_clusters)) == 1:
+        initial_rewards = np.array([initial_rewards])
+
+    # Set initial clusters and rewards to ground truth
+    # print("Initialising with ground truth rewards and clusters")
+    # initial_clusters = np.concatenate(
+    #     [[i] * demos_per_mode for i in range(num_elements)]
+    # )
+    # initial_rewards = np.array([r.theta for r in rewards_gt])
 
     with np.errstate(divide="raise", over="raise", invalid="raise"):
         rewards_learned = ch_dpm_birl(
             xtr,
             phi,
             demos,
-            k,
-            len(phi),
+            initial_clusters,
+            initial_rewards,
             max_iterations,
-            reward_prior_mean=np.mean(rewards_gt[0].theta),
-            reward_prior_covariance=np.var(rewards_gt[0].theta),
-            reward_prior_confidence=1.0,
-            cluster_prior_concentration=2.0,
-            reward_bounds=(-10.0, 0.0),
+            reward_prior_sample,
+            reward_prior_log_pdf,
+            reward_prior_log_pdf_grad,
+            dirichlet_prior_concentration=concentration,
+            reward_bounds=reward_bounds,
         )
 
     print("Learned Rewards:")
