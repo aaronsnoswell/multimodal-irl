@@ -157,7 +157,7 @@ class EMSolver(abc.ABC):
             (list): List of mdp_extras.Linear initial reward functions
         """
 
-        feature_mat = np.array([phi.expectation([r], xtr.gamma) for r in rollouts])
+        feature_mat = np.array([phi.onpath(r, xtr.gamma) for r in rollouts])
 
         km = KMeans(n_clusters=num_clusters, n_init=num_restarts)
         hard_initial_clusters = km.fit_predict(feature_mat)
@@ -207,7 +207,7 @@ class EMSolver(abc.ABC):
             (list): List of mdp_extras.Linear initial reward functions
         """
 
-        feature_mat = np.array([phi.expectation([r], xtr.gamma) for r in rollouts])
+        feature_mat = np.array([phi.onpath(r, xtr.gamma) for r in rollouts])
 
         gmm = GaussianMixture(n_components=num_clusters, n_init=num_restarts)
         gmm.fit(feature_mat)
@@ -354,7 +354,7 @@ class MaxEntEMSolver(EMSolver):
             theta0,
             method="L-BFGS-B",
         ):
-            phi_bar = phi.expectation(
+            phi_bar = phi.demo_average(
                 demonstrations,
                 gamma=xtr.gamma,
                 weights=(rollout_weights / np.sum(rollout_weights)),
@@ -536,10 +536,10 @@ class MeanOnlyEMSolver(MaxEntEMSolver):
         """
 
         # First compute the mean over all demonstrations - used for centering
-        phi_mean = phi.expectation(demonstrations, gamma=xtr.gamma)
+        phi_mean = phi.demo_average(demonstrations, gamma=xtr.gamma)
 
         feature_vecs = np.array(
-            [phi.expectation([d], gamma=xtr.gamma) for d in demonstrations]
+            [phi.onpath(d, gamma=xtr.gamma) for d in demonstrations]
         )
         feature_vecs -= phi_mean
 
