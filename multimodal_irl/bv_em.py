@@ -745,6 +745,7 @@ def bv_em(
     nll_tolerance=1e-5,
     resp_tolerance=1e-5,
     max_iterations=None,
+    break_on_nll_increase=True,
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
@@ -774,6 +775,10 @@ def bv_em(
         nll_tolerance (float): NLL convergence threshold
         resp_tolerance (float): Responsibility matrix convergence threshold
         max_iterations (int): Maximum number of iterations (alternate stopping criterion)
+        break_on_nll_increase (bool): The Mixture NLL can sometimes increase (instead of monotonically decreasing as
+            the theory predicts), due to numerical rounding errors, especially with the IRL gradients. If this is set to
+            true, the optimization will stop as soon as this occurs. Otherwise, a warning will be raised, but the
+            optimization will continue until some other stopping condition is reached.
 
     Returns:
         (int): Number of EM iterations performed
@@ -860,13 +865,14 @@ def bv_em(
                 warnings.warn(
                     f"NLL is not monotonically decreasing - possible loss of accuracy due to numerical rounding. NLL Delta = {nll_delta}"
                 )
-                # reason = "NLL is not monotonically decreasing"
-                # iteration -= 1
-                # resp_history = resp_history[:-1]
-                # mode_weights_history = mode_weights_history[:-1]
-                # rewards_history = rewards_history[:-1]
-                # nll_history = nll_history[:-1]
-                # break
+                if break_on_nll_increase:
+                    reason = "NLL is not monotonically decreasing"
+                    iteration -= 1
+                    resp_history = resp_history[:-1]
+                    mode_weights_history = mode_weights_history[:-1]
+                    rewards_history = rewards_history[:-1]
+                    nll_history = nll_history[:-1]
+                    break
 
         # Check for max iterations stopping condition
         if max_iterations is not None and iteration >= max_iterations - 1:
