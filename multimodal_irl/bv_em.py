@@ -45,7 +45,7 @@ class EMSolver(abc.ABC):
         post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
     ):
         """C-tor
-        
+
         Args:
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
@@ -64,14 +64,14 @@ class EMSolver(abc.ABC):
 
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
         """Compute responsibility matrix using MaxEnt reward parameters
-        
+
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (numpy array): Weights for each behaviour mode
             rewards (list): List of mdp_extras.Linear reward functions, one for each mode
             rollouts (list): List of (s, a) rollouts
-            
+
         Returns:
             (numpy array): |D|xK responsibility matrix based on the current reward
                 parameters and mode weights.
@@ -80,15 +80,15 @@ class EMSolver(abc.ABC):
 
     def mstep(self, xtr, phi, resp, rollouts, reward_range=None):
         """Compute reward parameters given responsibility matrix
-        
+
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             rollouts (list): Demonstration data
-            
+
             reward_range (tuple): Optional reward parameter min and max values
-    
+
         Returns:
             (list): List of Linear reward functions
         """
@@ -100,14 +100,14 @@ class EMSolver(abc.ABC):
 
     def init_random(self, phi, num_clusters, reward_range, with_resp=False):
         """Initialize mixture model uniform randomly
-        
+
         Args:
             phi (mdp_extras.FeatureFunction): Feature function
             num_clusters (int): Number of mixture components
             reward_range (tuple): Lower and upper reward function parameter bounds
-            
+
             with_resp (bool): Also return responsibility matrix
-        
+
         Returns:
             (numpy array): Initial mixture component weights
             (list): List of mdp_extras.Linear initial reward functions
@@ -140,18 +140,18 @@ class EMSolver(abc.ABC):
         with_resp=False,
     ):
         """Initialize mixture model with KMeans (hard clustering)
-        
+
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             rollouts (list): List of (s, a) rollouts
             num_clusters (int): Number of mixture components
             reward_range (tuple): Lower and upper reward function parameter bounds
-            
+
             num_restarts (int): Number of random clusterings to perform
             mean_center (bool): If true, center feature vectors
             with_resp (bool): Also return responsibility matrix
-        
+
         Returns:
             (numpy array): Initial mixture component weights
             (list): List of mdp_extras.Linear initial reward functions
@@ -191,17 +191,17 @@ class EMSolver(abc.ABC):
         with_resp=False,
     ):
         """Initialize mixture model with GMM (soft clustering)
-        
+
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             rollouts (list): List of (s, a) rollouts
             num_clusters (int): Number of mixture components
             reward_range (tuple): Lower and upper reward function parameter bounds
-            
+
             num_restarts (int): Number of random clusterings to perform
             with_resp (bool): Also return responsibility matrix
-        
+
         Returns:
             (numpy array): Initial mixture component weights
             (list): List of mdp_extras.Linear initial reward functions
@@ -242,12 +242,12 @@ class MaxEntEMSolver(EMSolver):
         method="L-BFGS-B",
     ):
         """C-tor
-        
+
         Args:
             minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
             minimize_options (dict): Optional args for the scipy.optimize.minimize
                 'options' parameter
-            
+
             pre_it (callable): Optional function accepting the current iteration - called
                 before that iteration commences
             post_it (callable): Optional function accepting the solver, current iteration,
@@ -268,14 +268,14 @@ class MaxEntEMSolver(EMSolver):
 
     def estep(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Compute responsibility matrix using MaxEnt reward parameters
-        
+
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (numpy array): Weights for each behaviour mode
             rewards (list): List of mdp_extras.Linear reward functions, one for each mode
             demonstrations (list): List of (s, a) rollouts
-            
+
         Returns:
             (numpy array): |D|xK responsibility matrix based on the current reward
                 parameters and mode weights.
@@ -320,15 +320,15 @@ class MaxEntEMSolver(EMSolver):
 
     def mstep(self, xtr, phi, resp, demonstrations, reward_range=None):
         """Compute reward parameters given responsibility matrix
-        
+
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             demonstrations (list): Demonstration data
-            
+
             reward_range (tuple): Optional reward parameter min and max values
-    
+
         Returns:
             (list): List of Linear reward functions
         """
@@ -471,14 +471,14 @@ class MaxEntEMSolver(EMSolver):
 
     def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Find the average negative log-likelihood of a MaxEnt mixture model
-    
+
         Args:
             xtr (): Extras object
             phi (): Features object
             mode_weights (list): List of prior probabilities for each mode
             rewards (): reward
             demonstrations (list): List of state-action rollouts
-    
+
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
@@ -514,18 +514,23 @@ class MeanOnlyEMSolver(MaxEntEMSolver):
     """Approximates a MaxEnt solver by picking the feature expectation at every mstep"""
 
     def mstep(
-        self, xtr, phi, resp, demonstrations, reward_range=None,
+        self,
+        xtr,
+        phi,
+        resp,
+        demonstrations,
+        reward_range=None,
     ):
         """Compute reward parameters given responsibility matrix
-        
+
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             demonstrations (list): Demonstration data
-            
+
             reward_range (tuple): Optional reward parameter min and max values
-    
+
         Returns:
             (list): List of Linear reward functions
         """
@@ -563,7 +568,7 @@ class MaxLikEMSolver(EMSolver):
         post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
     ):
         """C-tor
-        
+
         Args:
             boltzman_scale (float): Boltzmann policy scale factor
             qge_tol (float): Tolerance for Q-function gradient estimation
@@ -583,14 +588,14 @@ class MaxLikEMSolver(EMSolver):
 
     def estep(self, xtr, phi, mode_weights, rewards, rollouts):
         """Compute responsibility matrix using Max Likelihood reward parameters
-        
+
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (numpy array): Weights for each behaviour mode
             rewards (list): List of mdp_extras.Linear reward functions, one for each mode
             rollouts (list): List of (s, a) rollouts
-            
+
         Returns:
             (numpy array): |D|xK responsibility matrix based on the current reward
                 parameters and mode weights.
@@ -617,18 +622,23 @@ class MaxLikEMSolver(EMSolver):
         return resp
 
     def mstep(
-        self, xtr, phi, resp, rollouts, reward_range=None,
+        self,
+        xtr,
+        phi,
+        resp,
+        rollouts,
+        reward_range=None,
     ):
         """Compute reward parameters given responsibility matrix
-        
+
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
             phi (FeatureFunction): Feature function for multi-modal MDP
             resp (numpy array): Responsibility matrix
             rollouts (list): Demonstration data
-            
+
             reward_range (tuple): Optional reward parameter min and max values
-    
+
         Returns:
             (list): List of Linear reward functions
         """
@@ -669,12 +679,12 @@ class MaxLikEMSolver(EMSolver):
 
     def mixture_nll(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Find the average negative log-likelihood of a MaxLikelihood mixture model
-        
+
         Args:
             env (explicit_env.IExplicitEnv): Environment defining dynamics
             demonstrations (list): List of state-action rollouts
             mode_weights (list): List of prior probabilities for each mode
-    
+
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
@@ -738,16 +748,16 @@ def bv_em(
 ):
     """
     Expectation Maximization Multi-Modal IRL by Babeş-Vroman et al. 2011
-    
+
     See the paper "Apprenticeship learning about multiple intentions." in ICML 2011.
-    
+
     Stopping criterion is a logical OR of several options, each of which can be set to
     `None' to disable that check
      - NLL tolerance - stop when the NLL change falls below some threshold
      - Responsibility Matrix tolerance - Stop when the sum of responsibilty matrix entry
         differences falls below some threshold
      - Max Iterations - Stop after this many iterations
-    
+
     Args:
         xtr (mpd_extras.DiscreteExplicitExtras): MDP extras
         phi (mdp_extras.FeatureFunction): Feature function
@@ -755,7 +765,7 @@ def bv_em(
         solver (EMSolver): IRL solver to use for EM algorithm
         num_modes (int): Number of behaviour modes to learn
         reward_range (tuple): Low, High bounds for reward function parameters
-        
+
         mode_weights (numpy array): Initial mode weights. If provided, len() must match
             num_modes. If None, weights are uniformly sampled from the (num_modes - 1)
             probability simplex.
