@@ -5,7 +5,7 @@ import numpy as np
 
 from scipy.stats import dirichlet, multivariate_normal, multinomial, norm
 
-from mdp_extras import q_vi, BoltzmannExplorationPolicy, Linear, q_grad_fpi
+from mdp_extras import vi, BoltzmannExplorationPolicy, Linear, q_grad_fpi
 
 
 def cluster_compaction(clusters, *args):
@@ -216,6 +216,8 @@ def ch_dpm_birl(
      * https://github.com/erensezener/IRL_Algorithms/tree/ea19532d61f229f03e254f1ba938deb814e2aca7/irl_multiple_experts/DPM_BIRL
      * https://github.com/s-arora-1987/sawyer_i2rl_project_workspace
 
+    TODO ajs 3/Feb/21 This function leaks memory - after 3000 iterations it is hogging 15Gb.
+
     Args:
         xtr (mdp_extras.Extras): MDP Extras
         phi (mdp_extras.FeatureFunction): Feature function object
@@ -261,7 +263,7 @@ def ch_dpm_birl(
 
     # Solve for Boltzmann Policy for each reward parameter
     boltzmann_policies = [
-        BoltzmannExplorationPolicy(q_vi(xtr, phi, Linear(r)), reward_prior_confidence)
+        BoltzmannExplorationPolicy(vi(xtr, phi, Linear(r))[1], reward_prior_confidence)
         for r in rewards
     ]
 
@@ -273,7 +275,7 @@ def ch_dpm_birl(
 
         # Loop over each demonstration
         # We assume the list of clusters is always compact
-        print("Updating demonstration memberships...")
+        # print("Updating demonstration memberships...")
         for demo_idx, demo in enumerate(demonstrations):
             demo_cluster = clusters[demo_idx]
             demo_cluster_boltzmann_policy = boltzmann_policies[demo_cluster]
@@ -298,7 +300,7 @@ def ch_dpm_birl(
                     demo_cluster_new_reward, *reward_bounds
                 )
                 demo_cluster_boltzmann_policy_new = BoltzmannExplorationPolicy(
-                    q_vi(xtr, phi, Linear(demo_cluster_new_reward)),
+                    vi(xtr, phi, Linear(demo_cluster_new_reward))[1],
                     reward_prior_confidence,
                 )
             else:
@@ -353,9 +355,9 @@ def ch_dpm_birl(
                 # Reject the new cluster and reward - don't change anything
                 continue
 
-        print("Clusters:", clusters)
+        print("Current clusters:", clusters)
 
-        print("Updating rewards...")
+        # print("Updating rewards...")
         for cluster_idx in range(len(set(clusters))):
             # Update reward function estimates based on current clusters
             reward = rewards[cluster_idx]
@@ -387,7 +389,7 @@ def ch_dpm_birl(
             new_reward = np.clip(new_reward, *reward_bounds)
 
             # Compute acceptance probability of new reward
-            new_q_star = q_vi(xtr, phi, Linear(new_reward))
+            _, new_q_star = vi(xtr, phi, Linear(new_reward))
             new_q_grad = q_grad_fpi(new_reward, xtr, phi)
             new_reward_log_urpd = log_urpd(
                 xtr,
@@ -430,14 +432,14 @@ def ch_dpm_birl(
             accept_logprob = min(np.log(1.0), log_ratio)
             accept_prob = np.exp(accept_logprob)
 
-            print(f"R_{cluster_idx}: Log ratio is {log_ratio} ({np.exp(log_ratio)})")
+            # print(f"R_{cluster_idx}: Log ratio is {log_ratio} ({np.exp(log_ratio)})")
 
             # Accept/reject new reward
             if np.random.rand() <= accept_prob:
                 # Accept new reward
-                print(
-                    f"Accepting R_{cluster_idx} change from\n{reward} to\n{new_reward}"
-                )
+                # print(
+                #     f"Accepting R_{cluster_idx} change from\n{reward} to\n{new_reward}"
+                # )
                 rewards[cluster_idx] = new_reward
 
                 # Solve for policy under new cluster reward
@@ -447,7 +449,7 @@ def ch_dpm_birl(
                 boltzmann_policies[cluster_idx] = cluster_policy_new
             else:
                 # Reject new reward
-                print(f"Rejecting change of R_{cluster_idx}")
+                # print(f"Rejecting change of R_{cluster_idx}")
                 continue
 
         # Run a compaction step, removing any empty clusters
@@ -455,7 +457,7 @@ def ch_dpm_birl(
             clusters, rewards, boltzmann_policies
         )
 
-        print("Current Rewards:")
+        print("Current rewards:")
         print(rewards)
 
         print(
@@ -469,7 +471,7 @@ def ch_dpm_birl(
 def main():
     """Main function"""
 
-    from mdp_extras import q_vi, OptimalPolicy
+    from mdp_extras import vi, OptimalPolicy
     from multimodal_irl.envs.element_world import ElementWorldEnv, element_world_extras
 
     demos_per_mode = 10
@@ -479,7 +481,7 @@ def main():
     xtr, phi, rewards_gt = element_world_extras(env)
     demos = []
     for reward in rewards_gt:
-        q_star = q_vi(xtr, phi, reward)
+        _, q_star = vi(xtr, phi, reward)
         pi_star = OptimalPolicy(q_star)
         cluster_demos = pi_star.get_rollouts(env, demos_per_mode)
         demos.extend(cluster_demos)
@@ -488,11 +490,11 @@ def main():
     print(np.array([r.theta for r in rewards_gt]))
 
     # Algorithm hyper-params
-    concentration = 1.0
+    concentration = 10.0
     max_initial_clusters = num_elements
     reward_mean = np.mean(rewards_gt[0].theta) * np.ones_like(rewards_gt[0].theta)
     reward_covariance = np.var(rewards_gt[0].theta) * np.ones_like(rewards_gt[0].theta)
-    max_iterations = 1000
+    max_iterations = 10000
     reward_bounds = (-10.0, 0.0)
 
     # Initialise clusters

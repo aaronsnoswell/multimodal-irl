@@ -24,7 +24,7 @@ from multimodal_irl.envs import (
     CanonicalPuddleWorldEnv,
     puddle_world_extras,
 )
-from mdp_extras import OptimalPolicy, padding_trick, q_vi, PaddedMDPWarning
+from mdp_extras import OptimalPolicy, padding_trick, vi, PaddedMDPWarning
 
 from multimodal_irl.metrics import (
     normalized_information_distance,
@@ -129,7 +129,7 @@ def canonical_puddle_world(
     te_rollouts = []
     for reward in gt_rewards:
         # Get Q* function
-        q_star = q_vi(xtr, phi, reward=reward)
+        _, q_star = vi(xtr, phi, reward=reward)
         q_stars.append(q_star)
 
         # Get optimal stochastic policy
@@ -165,11 +165,15 @@ def canonical_puddle_world(
 
     # Lambda to get ground truth responsibility matrix
     gt_resp = lambda k, rpm: (
-        np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
+        np.concatenate(
+            [np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)],
+            0,
+        )
     )
 
     def eval_clustering(
-        gt_resp, learned_resp,
+        gt_resp,
+        learned_resp,
     ):
         """Evaluate a mixture model's clustering performance"""
 
@@ -180,7 +184,10 @@ def canonical_puddle_world(
         return nid, anid
 
     def eval_rewards(
-        gt_mode_weights, gt_rewards, learned_mode_weights, learned_rewards,
+        gt_mode_weights,
+        gt_rewards,
+        learned_mode_weights,
+        learned_rewards,
     ):
         """Evaluate a mixture model's reward performance"""
         gt_num_clusters = len(gt_mode_weights)

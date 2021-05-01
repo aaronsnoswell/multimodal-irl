@@ -26,9 +26,8 @@ from unimodal_irl import (
 from mdp_extras import (
     Linear,
     trajectory_reward,
-    q_vi,
+    vi,
     BoltzmannExplorationPolicy,
-    v_vi,
     DiscreteExplicitExtras,
     DiscreteImplicitExtras,
 )
@@ -609,7 +608,7 @@ class MaxLikEMSolver(EMSolver):
 
         resp = np.ones((len(rollouts), num_modes))
         for mode_idx, (mode_weight, reward) in enumerate(zip(mode_weights, rewards)):
-            q_star = q_vi(xtr, phi, reward)
+            _, q_star = vi(xtr, phi, reward)
             pi = BoltzmannExplorationPolicy(q_star, scale=self._boltzman_scale)
             for rollout_idx, rollout in enumerate(rollouts):
                 resp[rollout_idx, mode_idx] = mode_weight * np.exp(
@@ -691,7 +690,7 @@ class MaxLikEMSolver(EMSolver):
 
         # Compute Boltzman probabilities
         exp_beta_q_stars = [
-            np.exp(self._boltzman_scale * q_vi(xtr, phi, reward)) for reward in rewards
+            np.exp(self._boltzman_scale * vi(xtr, phi, reward)[1]) for reward in rewards
         ]
         boltzman_policy_probs = [
             exp_beta_q_star / np.sum(exp_beta_q_star, axis=1, keepdims=True)

@@ -65,11 +65,11 @@ class ElementWorldEnv(gym.Env):
         seed=None,
     ):
         """C-tor
-        
+
         Args:
             width (int): Width of PuddleWorld
             height (int): Height of PuddleWorld
-            
+
             wind (float): Wind (random action) probability
             seed (int): Random seed to use
         """
@@ -213,7 +213,8 @@ class ElementWorldEnv(gym.Env):
 
         # Apply action
         self.state = np.random.choice(
-            self._states, p=self._t_mat[self.state, action, :].flatten(),
+            self._states,
+            p=self._t_mat[self.state, action, :].flatten(),
         )
 
         return (
@@ -318,10 +319,10 @@ class ElementWorldEnv(gym.Env):
 
 def element_world_extras(env):
     """Get multi-modal MDP extras for an ElementWorld env
-    
+
     Args:
         env (ElementWorld): Environment to build extras from
-        
+
     Returns:
         (DiscreteExplicitExtras): ElementWorld extras object
         (Disjoint): ElementWorld feature function
@@ -346,7 +347,7 @@ def element_world_extras(env):
         r[1] = env.REWARD_VALUES["meh"]
         reward = Linear(r)
 
-        v_star = v_vi(xtr, phi, reward).reshape(env._height, env._width)
+        v_star, _ = vi(xtr, phi, reward).reshape(env._height, env._width)
         policy_will_leave_start_line = np.any(v_star[:, 1] > v_star[:, 0])
         assert (
             policy_will_leave_start_line
@@ -364,7 +365,7 @@ def element_world_mixture_ml_path(
     xtr, phi, demos, get_ml_path, mixture_weights, rewards
 ):
     """Find the ML path for an ElementWorld MaxEnt mixture
-    
+
     Args:
         xtr (DiscreteEplicitExtras): MDP extras
         phi (FeatureFunction): Feature function
@@ -374,7 +375,7 @@ def element_world_mixture_ml_path(
             model with that reward.
         mixture_weights (numpy array): Mixture component weights
         rewards (list): List of Linear rewards
-    
+
     Returns:
         (list): List of ML paths from the mixture - one for each dmeo paths' start and
             end state
@@ -424,7 +425,7 @@ def element_world_mixture_ml_path(
 
 def percent_distance_missed_metric(path_l, path_gt):
     """Compute % distance missed metric from learned to GT path
-    
+
     Assumes paths are non-cyclic and share start and end states
     """
     gt_path_len = len(path_gt)

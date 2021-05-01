@@ -31,7 +31,7 @@ from mdp_extras import (
     OptimalPolicy,
     BoltzmannExplorationPolicy,
     padding_trick,
-    q_vi,
+    vi,
     PaddedMDPWarning,
 )
 
@@ -126,7 +126,7 @@ def element_world_v4(
         resp_row[ri] = 1.0
         for _ in range(num_element_demos):
             train_gt_resp.append(resp_row)
-        q_star = q_vi(xtr, phi, reward)
+        _, q_star = vi(xtr, phi, reward)
         # pi_star = OptimalPolicy(q_star)
         pi_star = BoltzmannExplorationPolicy(q_star, scale=boltzmann_scale)
         train_demos.extend(
@@ -145,7 +145,7 @@ def element_world_v4(
         resp_row[ri] = 1.0
         for _ in range(num_element_demos):
             test_gt_resp.append(resp_row)
-        q_star = q_vi(xtr, phi, reward)
+        _, q_star = vi(xtr, phi, reward)
         # pi_star = OptimalPolicy(q_star)
         pi_star = BoltzmannExplorationPolicy(q_star, scale=boltzmann_scale)
         test_demos.extend(
