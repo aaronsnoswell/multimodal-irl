@@ -509,51 +509,6 @@ class MaxEntEMSolver(EMSolver):
         return -1.0 * mixture_ll
 
 
-class MeanOnlyEMSolver(MaxEntEMSolver):
-    """Approximates a MaxEnt solver by picking the feature expectation at every mstep"""
-
-    def mstep(
-        self,
-        xtr,
-        phi,
-        resp,
-        demonstrations,
-        reward_range=None,
-    ):
-        """Compute reward parameters given responsibility matrix
-
-        Args:
-            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
-            phi (FeatureFunction): Feature function for multi-modal MDP
-            resp (numpy array): Responsibility matrix
-            demonstrations (list): Demonstration data
-
-            reward_range (tuple): Optional reward parameter min and max values
-
-        Returns:
-            (list): List of Linear reward functions
-        """
-
-        # First compute the mean over all demonstrations - used for centering
-        phi_mean = phi.demo_average(demonstrations, gamma=xtr.gamma)
-
-        feature_vecs = np.array(
-            [phi.onpath(d, gamma=xtr.gamma) for d in demonstrations]
-        )
-        feature_vecs -= phi_mean
-
-        rewards = []
-        for mode_demo_weights in resp.T:
-            # Now compute mean using cluster weights
-            phi_bar = np.average(
-                feature_vecs,
-                axis=0,
-                weights=(mode_demo_weights / np.sum(mode_demo_weights)),
-            )
-            rewards.append(Linear(phi_bar))
-        return rewards
-
-
 class MaxLikEMSolver(EMSolver):
     """Solve an EM MM-IRL problem with MaxLikelihood IRL"""
 
@@ -730,6 +685,52 @@ class MaxLikEMSolver(EMSolver):
         mixture_ll = np.mean(trajectory_mixture_lls)
 
         return -1.0 * mixture_ll
+
+
+
+class MeanOnlyEMSolver(MaxEntEMSolver):
+    """Approximates a MaxEnt solver by picking the feature expectation at every mstep"""
+
+    def mstep(
+        self,
+        xtr,
+        phi,
+        resp,
+        demonstrations,
+        reward_range=None,
+    ):
+        """Compute reward parameters given responsibility matrix
+
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            demonstrations (list): Demonstration data
+
+            reward_range (tuple): Optional reward parameter min and max values
+
+        Returns:
+            (list): List of Linear reward functions
+        """
+
+        # First compute the mean over all demonstrations - used for centering
+        phi_mean = phi.demo_average(demonstrations, gamma=xtr.gamma)
+
+        feature_vecs = np.array(
+            [phi.onpath(d, gamma=xtr.gamma) for d in demonstrations]
+        )
+        feature_vecs -= phi_mean
+
+        rewards = []
+        for mode_demo_weights in resp.T:
+            # Now compute mean using cluster weights
+            phi_bar = np.average(
+                feature_vecs,
+                axis=0,
+                weights=(mode_demo_weights / np.sum(mode_demo_weights)),
+            )
+            rewards.append(Linear(phi_bar))
+        return rewards
 
 
 def bv_em(
