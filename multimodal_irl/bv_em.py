@@ -687,6 +687,328 @@ class MaxLikEMSolver(EMSolver):
         return -1.0 * mixture_ll
 
 
+class SigmaGIRLEMSolver(EMSolver):
+    """Solve an EM MM-IRL problem with multiple-intention Sigma-GIRL IRL
+
+    I.e. Algorithm 1 from
+     * Ramponi, Giorgia, et al. "Truly Batch Model-Free Inverse Reinforcement Learning about Multiple Intentions."
+       International Conference on Artificial Intelligence and Statistics. PMLR, 2020.
+
+    """
+
+    def __init__(
+        self,
+        policy_factory,
+        mstep_restarts=100,
+        mstep_num_bc_epochs=1000,
+        minimize_kwargs={},
+        minimize_options={},
+        pre_it=lambda i: None,
+        post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
+    ):
+        """C-tor
+
+        Args:
+            policy_factory (callable): A callable that returns a Sigma-GIRL policy compatible with the
+                current MDP object, ready for behaviour cloning
+
+            mstep_restarts (int): Number of random re-starts to perform for each mode during the M-Step
+            mstep_num_bc_epochs (int): Number of behaviour clonining epochs to perform for each mode during
+                the M-Step
+
+            minimize_kwargs (dict): Optional keyword arguments to scipy.optimize.minimize
+            minimize_options (dict): Optional args for the scipy.optimize.minimize
+                'options' parameter
+            pre_it (callable): Optional function accepting the current iteration - called
+                before that iteration commences
+            post_it (callable): Optional function accepting the solver, current iteration,
+                responsibility matrix, mode weights, and reward objects - called
+                after that iteration ends
+        """
+        super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
+
+        self.policy_factory = policy_factory
+        self.mstep_restarts = mstep_restarts
+        self.mstep_num_bc_epochs = mstep_num_bc_epochs
+
+    def estep(
+        self, xtr, phi, mode_weights, rewards, policies, jac_means, jac_covs, rollouts
+    ):
+        """Compute responsibility matrix using current SigmaGIRL rewards, BC policies, and jacboain distributions
+
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            mode_weights (numpy array): Weights for each behaviour mode
+            rewards (list): List of mdp_extras.Linear reward functions, one for each mode
+            policies (list): List of Sigma-GIRL policy classes, one for each mode
+            jac_means (list): List of Sigma-GIRL empirical jacobian means, one for each mode
+            jac_covs (list): List of Sigma-GIRL empirical jacobian covariance matrices, one for each mode
+            rollouts (list): List of (s, a) rollouts
+
+        Returns:
+            (numpy array): |D|xK responsibility matrix based on the current reward
+                parameters and mode weights.
+        """
+
+        num_modes = len(mode_weights)
+
+        # Shortcut for K=1
+        if num_modes == 1:
+            return np.array([np.ones(len(rollouts))]).T
+
+        resp = np.ones((len(rollouts), num_modes))
+        for mode_idx, (mode_weight, reward, pi, jac_mean, jac_cov) in enumerate(
+            zip(mode_weights, rewards, jac_means, jac_covs)
+        ):
+
+            # Compute optimal jacobian mean from empirical
+            opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward)
+
+            # Compute jacobian for each demonstration trajectory
+            demo_jacs = np.array(
+                [traj_jacobian(pi, phi, d, xtr.gamma) for d in rollouts]
+            )
+
+            # Compute path log likelihoods under this reward
+            path_lls = gradient_path_logprobs(opt_jac_mean, jac_cov, demo_jacs)
+
+            # Store this column in the responsibility matrix
+            path_probs = mode_weight * np.exp(path_lls)
+            resp[:, mode_idx] = path_probs
+
+        # Each demonstration gets a mass of 1 to allocate between modes
+        resp /= np.sum(resp, axis=1, keepdims=True)
+
+        return resp
+
+    def mstep(
+        self,
+        xtr,
+        phi,
+        resp,
+        rollouts,
+        reward_range=None,
+    ):
+        """Compute reward parameters given responsibility matrix
+
+        TODO ajs 25/May/2021 How to account for reward range with Sigma-GIRL?
+
+        Args:
+            xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
+            phi (FeatureFunction): Feature function for multi-modal MDP
+            resp (numpy array): Responsibility matrix
+            rollouts (list): Demonstration data
+
+            reward_range (tuple): Optional reward parameter min and max values
+
+        Returns:
+            (list): List of Sigma-GIRL policy objects
+            (list): List of Linear reward functions
+            (list): List of optimal jacobian means
+            (list): List of empirical jacobian covariance matrices
+        """
+
+        num_rollouts, num_modes = resp.shape
+
+        policies = []
+        rewards = []
+        opt_jac_means = []
+        jac_covs = []
+        for mode_idx in range(num_modes):
+
+            rollout_weights = resp[:, mode_idx]
+
+            # Behaviour clone against weighted dataset
+            pi = self.policy_factory().behaviour_clone(
+                demos, phi, num_epochs=self.mstep_num_bc_epochs, weights=rollout_weights
+            )
+            policies.append(pi)
+
+            # Find weighted data jacobian
+            all_jacs, jac_mean, jac_cov, p_mat = form_jacobian(pi, phi, demos)
+            jac_covs.append(jac_cov)
+            d, q = jac_mean.shape
+
+            # Run optimization here
+            evaluations = []
+            while len(evaluations) < self.mstep_restarts - 1:
+                # Choose random initial guess
+                x0 = np.random.uniform(0, 1, q)
+                x0 = x0 / np.sum(x0)
+
+                res = sp.optimize.minimize(
+                    pi_gradient_irl,
+                    x0,
+                    method="SLSQP",
+                    constraints={"type": "eq", "fun": lambda w: np.sum(w) - 1},
+                    bounds=[(0.0, 1.0)] * len(x0),
+                    args=(p_mat),
+                    options={"ftol": 1e-8, "disp": False},
+                )
+                if res.success:
+                    # If the optimization was successful, save it
+                    evaluations.append([res.x, res.fun])
+            params, losses = zip(*evaluations)
+            reward_weights = params[np.argmin(losses)]
+            rewards.append(Linear(reward_weights))
+
+            # Find weighted data optimal jacobian mean
+            opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward_weights)
+            jac_means.append(opt_jac_mean)
+
+        return policies, rewards, opt_jac_means, jac_covs
+
+    def mixture_nll(
+        self,
+        xtr,
+        phi,
+        mode_weights,
+        rewards,
+        policies,
+        opt_jac_means,
+        jac_covs,
+        demonstrations,
+    ):
+        """Find the average negative log-likelihood of a MaxLikelihood mixture model
+
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP definition
+            phi (mdp_extras.FeatureFunction): Feature function
+            mode_weights (list): List of prior probabilities, one for each mode
+            reawards (list): List of Linear rewards, one for each mode
+            policies (list): List of Sigma-GIRL policy objects, one for each mode
+            opt_jac_means (list): List of optimal jacobian mean matrices, one for each mode
+            jac_covs (list): List of empirical jacobian covariance matrices, one for each mode
+            demonstrations (list): List of state-action rollouts
+
+        Returns:
+            (float): Log Likelihood of the rollouts under the given mixture model
+        """
+
+        # Pre-compute path probabilities under each mode
+        path_probs = []
+        for pi, opt_jac_mean, jac_cov in zip(rewards, policies, opt_jac_mean, jac_covs):
+            rollout_jacobians = np.array([traj_jacobian(pi, phi, traj, xtr.gamma)])
+            path_probs.append(
+                gradient_path_logprobs(opt_jac_mean, jac_cov, rollout_jacobians)
+            )
+        path_probs = np.array(path_probs)
+
+        trajectory_mixture_lls = []
+        for demo_idx in range(len(demonstrations)):
+            # Sum at this level, then take log at this level
+            trajectory_mixture_lls.append(
+                np.log(
+                    np.sum(
+                        [
+                            mode_weight * path_probs[mode_idx, demo_idx]
+                            for mode_idx, mode_weight in enumerate(mode_weights)
+                        ]
+                    )
+                )
+            )
+
+        mixture_ll = np.mean(trajectory_mixture_lls)
+
+        return -1.0 * mixture_ll
+
+    def init_kmeans(
+        self,
+        xtr,
+        phi,
+        rollouts,
+        num_clusters,
+        reward_range,
+        num_restarts=5000,
+        with_resp=False,
+    ):
+        """Initialize mixture model with KMeans (hard clustering)
+
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            rollouts (list): List of (s, a) rollouts
+            num_clusters (int): Number of mixture components
+            reward_range (tuple): Lower and upper reward function parameter bounds
+
+            num_restarts (int): Number of random clusterings to perform
+            mean_center (bool): If true, center feature vectors
+            with_resp (bool): Also return responsibility matrix as first return variable
+
+        Returns:
+            (numpy array): Initial mixture component weights
+            (list): List of initial Sigma-GIRL policy objects
+            (list): List of mdp_extras.Linear initial reward functions
+            (list): List of initial optimal jacobian means
+            (list): List of initial empirical jacobian covariance matrices
+        """
+
+        ret = super().init_kmeans(
+            xtr,
+            phi,
+            rollouts,
+            num_clusters,
+            reward_range,
+            num_restarts=num_restarts,
+            with_resp=with_resp,
+        )
+
+        # Explode out mode 'rewards' from Sigma-GIRL M-Step
+        if with_resp:
+            soft_initial_clusters, mode_weights, rewards = ret
+            return (soft_initial_clusters, mode_weights, *rewards)
+        else:
+            mode_weights, rewards = ret
+            return (mode_weights, *rewards)
+
+    def init_gmm(
+        self,
+        xtr,
+        phi,
+        rollouts,
+        num_clusters,
+        reward_range,
+        num_restarts=5000,
+        with_resp=False,
+    ):
+        """Initialize mixture model with GMM (soft clustering)
+
+        Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
+            phi (mdp_extras.FeatureFunction): Feature function
+            rollouts (list): List of (s, a) rollouts
+            num_clusters (int): Number of mixture components
+            reward_range (tuple): Lower and upper reward function parameter bounds
+
+            num_restarts (int): Number of random clusterings to perform
+            with_resp (bool): Also return responsibility matrix as first return variable
+
+        Returns:
+            (numpy array): Initial mixture component weights
+            (list): List of initial Sigma-GIRL policy objects
+            (list): List of mdp_extras.Linear initial reward functions
+            (list): List of initial optimal jacobian means
+            (list): List of initial empirical jacobian covariance matrices
+        """
+        ret = super().init_kmeans(
+            xtr,
+            phi,
+            rollouts,
+            num_clusters,
+            reward_range,
+            num_restarts=num_restarts,
+            with_resp=with_resp,
+        )
+
+        # Explode out mode 'rewards' from Sigma-GIRL M-Step
+        if with_resp:
+            soft_initial_clusters, mode_weights, rewards = ret
+            return (soft_initial_clusters, mode_weights, *rewards)
+        else:
+            mode_weights, rewards = ret
+            return (mode_weights, *rewards)
+
 
 class MeanOnlyEMSolver(MaxEntEMSolver):
     """Approximates a MaxEnt solver by picking the feature expectation at every mstep"""
@@ -891,7 +1213,29 @@ def bv_em(
 
 def main():
     """Main function"""
-    pass
+
+    # Construct env
+    from multimodal_irl.envs import ElementWorldEnv, element_world_extras
+
+    env = ElementWorldEnv()
+    xtr, phi, rewards = element_world_extras(env)
+
+    # Prepare policy factory
+    policy_hidden_size = 30
+    policy_factory = lambda: MLPCategoricalPolicy(
+        len(phi), len(xtr.actions), hidden_size=policy_hidden_size
+    )
+
+    # Collect dataset of demonstration (s, a) trajectories from expert
+    num_rollouts_per_mode = 100
+    for reward in rewards:
+        _, q_star = vi(xtr, phi, reward)
+        pi_star = OptimalPolicy(q_star, stochastic=True)
+        demos = pi_star.get_rollouts(env, num_rollouts_per_mode)
+
+    solver = SigmaGIRLEMSolver(policy_factory)
+
+    print("Here")
 
 
 if __name__ == "__main__":
