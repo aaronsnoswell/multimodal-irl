@@ -6,21 +6,9 @@ import matplotlib.pyplot as plt
 from gym import spaces
 from gym.utils import seeding
 
-from mdp_extras import (
-    DiscreteExplicitExtras,
-    Disjoint,
-    Linear,
-    OptimalPolicy,
-    nonoverlapping_shared_subsequences,
-    padding_trick,
-)
-from mdp_extras.utils import compute_parents_children
-from unimodal_irl.sw_maxent_irl import maxent_ml_path, maxent_path_logprobs
-
-from multimodal_irl.bv_em import MaxEntEMSolver, bv_em
-
-
 from mdp_extras import *
+
+from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 
 
 class ElementWorldEnv(gym.Env):
@@ -347,7 +335,7 @@ def element_world_extras(env):
         r[1] = env.REWARD_VALUES["meh"]
         reward = Linear(r)
 
-        v_star, _ = vi(xtr, phi, reward).reshape(env._height, env._width)
+        v_star = vi(xtr, phi, reward)[0].reshape(env._height, env._width)
         policy_will_leave_start_line = np.any(v_star[:, 1] > v_star[:, 0])
         assert (
             policy_will_leave_start_line
