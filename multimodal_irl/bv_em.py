@@ -149,7 +149,7 @@ class EMSolver(abc.ABC):
 
             num_restarts (int): Number of random clusterings to perform
             mean_center (bool): If true, center feature vectors
-            with_resp (bool): Also return responsibility matrix
+            with_resp (bool): Also return responsibility matrix as first return variable
 
         Returns:
             (numpy array): Initial mixture component weights
@@ -199,7 +199,7 @@ class EMSolver(abc.ABC):
             reward_range (tuple): Lower and upper reward function parameter bounds
 
             num_restarts (int): Number of random clusterings to perform
-            with_resp (bool): Also return responsibility matrix
+            with_resp (bool): Also return responsibility matrix as first return variable
 
         Returns:
             (numpy array): Initial mixture component weights
