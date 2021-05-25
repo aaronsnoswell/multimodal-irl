@@ -22,6 +22,12 @@ from unimodal_irl import (
     nb_backward_pass_log_deterministic_stateonly,
     log_partition,
     bv_maxlikelihood_irl,
+    traj_jacobian,
+    form_jacobian,
+    pi_gradient_irl,
+    optimal_jacobian_mean,
+    gradient_log_likelihood,
+    gradient_path_logprobs,
 )
 from mdp_extras import (
     Linear,
@@ -821,12 +827,15 @@ class SigmaGIRLEMSolver(EMSolver):
 
             # Behaviour clone against weighted dataset
             pi = self.policy_factory().behaviour_clone(
-                demos, phi, num_epochs=self.mstep_num_bc_epochs, weights=rollout_weights
+                rollouts,
+                phi,
+                num_epochs=self.mstep_num_bc_epochs,
+                weights=rollout_weights,
             )
             policies.append(pi)
 
             # Find weighted data jacobian
-            all_jacs, jac_mean, jac_cov, p_mat = form_jacobian(pi, phi, demos)
+            all_jacs, jac_mean, jac_cov, p_mat = form_jacobian(pi, phi, rollouts)
             jac_covs.append(jac_cov)
             d, q = jac_mean.shape
 
@@ -837,7 +846,7 @@ class SigmaGIRLEMSolver(EMSolver):
                 x0 = np.random.uniform(0, 1, q)
                 x0 = x0 / np.sum(x0)
 
-                res = sp.optimize.minimize(
+                res = minimize(
                     pi_gradient_irl,
                     x0,
                     method="SLSQP",
@@ -855,7 +864,7 @@ class SigmaGIRLEMSolver(EMSolver):
 
             # Find weighted data optimal jacobian mean
             opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward_weights)
-            jac_means.append(opt_jac_mean)
+            opt_jac_means.append(opt_jac_mean)
 
         return policies, rewards, opt_jac_means, jac_covs
 
@@ -1215,6 +1224,7 @@ def main():
     """Main function"""
 
     # Construct env
+    from mdp_extras import OptimalPolicy, vi, MLPCategoricalPolicy
     from multimodal_irl.envs import ElementWorldEnv, element_world_extras
 
     env = ElementWorldEnv()
@@ -1228,12 +1238,22 @@ def main():
 
     # Collect dataset of demonstration (s, a) trajectories from expert
     num_rollouts_per_mode = 100
+    demos = []
     for reward in rewards:
         _, q_star = vi(xtr, phi, reward)
         pi_star = OptimalPolicy(q_star, stochastic=True)
-        demos = pi_star.get_rollouts(env, num_rollouts_per_mode)
+        demos.extend(pi_star.get_rollouts(env, num_rollouts_per_mode))
 
     solver = SigmaGIRLEMSolver(policy_factory)
+
+    (
+        soft_initial_clusters,
+        mode_weights,
+        policies,
+        rewards,
+        opt_jac_means,
+        jac_covs,
+    ) = solver.init_kmeans(xtr, phi, demos, 4, reward_range=(0.0, 1.0), with_resp=True)
 
     print("Here")
 
