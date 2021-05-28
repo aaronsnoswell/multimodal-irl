@@ -806,7 +806,6 @@ class SigmaGIRLEMSolver(EMSolver):
             zip(mode_weights, policies, opt_jac_means, jac_covs)
         ):
 
-
             # Compute jacobian for each demonstration trajectory
             demo_jacs = np.array(
                 [traj_jacobian(pi, phi_mirrored, d, xtr.gamma) for d in rollouts]
@@ -1128,12 +1127,17 @@ def bv_em(
         (str): Reason for termination
     """
 
-    # Initialize reward parameters and mode weights randomly if not passed
-    if mode_weights is None:
-        mode_weights, _ = solver.init_random(phi, num_modes, reward_range)
-
-    if rewards is None:
-        _, rewards = solver.init_random(phi, num_modes, reward_range)
+    # Initialize reward parameters and/or mode weights randomly if not passed
+    if mode_weights is None and rewards is None:
+        mode_weights, rewards = solver.init_random(
+            xtr, phi, rollouts, num_modes, reward_range
+        )
+    elif mode_weights is None:
+        mode_weights, _ = solver.init_random(
+            xtr, phi, rollouts, num_modes, reward_range
+        )
+    elif rewards is None:
+        _, rewards = solver.init_random(xtr, phi, rollouts, num_modes, reward_range)
 
     assert len(mode_weights) == num_modes
     assert len(rewards) == num_modes
