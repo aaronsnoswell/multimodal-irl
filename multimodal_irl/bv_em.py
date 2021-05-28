@@ -1366,7 +1366,7 @@ def main():
     from multimodal_irl.envs import ElementWorldEnv, element_world_extras
 
     num_elements = 2
-    width = 5
+    width = 6
     reward_range = (-10.0, 0.0)
     env = ElementWorldEnv(
         num_elements=num_elements, rotate=False, element_zone_size=3, width=width
