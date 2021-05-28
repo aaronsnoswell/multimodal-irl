@@ -813,13 +813,14 @@ class SigmaGIRLEMSolver(EMSolver):
         for mode_idx, (mode_weight, pi, opt_jac_mean, jac_cov) in enumerate(
             zip(mode_weights, policies, opt_jac_means, jac_covs)
         ):
-
+            print(f"Mode {mode_idx + 1} - computing demo jacobians")
             # Compute jacobian for each demonstration trajectory
             demo_jacs = np.array(
                 [traj_jacobian(pi, phi_mirrored, d, xtr.gamma) for d in rollouts]
             )
 
             # Compute path log likelihoods under this reward
+            print(f"Mode {mode_idx + 1} - computing demo log likelihoods")
             path_lls = gradient_path_logprobs(opt_jac_mean, jac_cov, demo_jacs)
 
             # Store this column in the responsibility matrix
@@ -1381,7 +1382,7 @@ def main():
 
     print("Collecting data")
     # Collect dataset of demonstration (s, a) trajectories from expert
-    num_rollouts_per_mode = 10
+    num_rollouts_per_mode = 5
     rollouts = []
     for reward in gt_rewards:
         _, q_star = vi(xtr, phi, reward)
