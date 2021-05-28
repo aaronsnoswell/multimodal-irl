@@ -67,6 +67,7 @@ class ElementWorldEnv(gym.Env):
         target_element=0,
         wind=0.1,
         gamma=0.99,
+        rotate=True,
         seed=None,
     ):
         """C-tor
@@ -76,6 +77,8 @@ class ElementWorldEnv(gym.Env):
             height (int): Height of PuddleWorld
 
             wind (float): Wind (random action) probability
+            gamma (float): Discount factor
+            rotate (bool): Rotate element columns to make the environment more difficult
             seed (int): Random seed to use
         """
         self.seed(seed)
@@ -105,11 +108,12 @@ class ElementWorldEnv(gym.Env):
             element_endy = (element + 1) * self._element_zone_size
             self._feature_matrix[element_starty:element_endy, :] = element + 2
 
-        # Rotate each central column of the world
-        for col in range(1, self._width):
-            roty = np.random.choice([-2, -1, 0, 1, 2])
-            orig_values = self._feature_matrix[:, col:]
-            self._feature_matrix[:, col:] = np.roll(orig_values, roty, axis=0)
+        if rotate:
+            # Rotate each central column of the world
+            for col in range(1, self._width):
+                roty = np.random.choice([-2, -1, 0, 1, 2])
+                orig_values = self._feature_matrix[:, col:]
+                self._feature_matrix[:, col:] = np.roll(orig_values, roty, axis=0)
 
         # Goal states are along the right hand wall
         self._goal_states = (self._width * np.arange(1, self._height + 1) - 1).astype(
