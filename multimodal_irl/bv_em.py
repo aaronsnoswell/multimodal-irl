@@ -1246,6 +1246,112 @@ def bv_em(
     )
 
 
+import torch
+from mdp_extras import TorchPolicy
+
+
+class EWSimplePolicy(TorchPolicy):
+    """A very simple policy that can solve ElementWorld if the params are set right"""
+
+    def __init__(self, in_dim, out_dim, learning_rate=0.01):
+        """C-tor
+
+        Args:
+            in_dim (int): Input (feature vector) size
+            out_dim (int): Output (action vector) size
+            hidden_size (int): Size of the hidden layer
+            learning_rate (float): Learning rate for optimizer used for training
+        """
+        super().__init__(in_dim, out_dim, hidden_size=None, learning_rate=learning_rate)
+
+        # self.fc1 = torch.nn.Linear(in_dim, out_dim, bias=False)
+        self.out_dim = out_dim
+
+        self.w_start_right = torch.nn.Parameter(torch.rand(1))
+        self.w_el_right = torch.nn.Parameter(torch.rand(1))
+        self.w_e2_right = torch.nn.Parameter(torch.rand(1))
+        self.w_el_up = torch.nn.Parameter(torch.rand(1))
+        self.w_e2_up = torch.nn.Parameter(torch.rand(1))
+
+        self.loss_fn = torch.nn.CrossEntropyLoss(reduction="sum")
+        self.loss_target_type = torch.long
+        self.optimizer = torch.optim.Adam(self.parameters(), lr=learning_rate)
+
+    def forward(self, x):
+        # Input is feature vector phi(s, a, s')
+        if not isinstance(x, torch.Tensor):
+            x = torch.tensor(x)
+        x = x.float()
+        # x = self.fc1(x)
+
+        if len(x.shape) == 1:
+            x = x.reshape((1, -1))
+
+        #
+        start = x[:, 0]
+        goal = x[:, 1]
+        e1 = x[:, 2]
+        e2 = x[:, 2]
+        up, down, left, right = 0, 1, 2, 3
+
+        #
+        y = torch.zeros(x.shape[0], self.out_dim, requires_grad=True) + 1.0
+        y[:, right] = (
+            self.w_start_right * start + self.w_el_right * e1 + self.w_e2_right * e2
+        )
+        y[:, up] = self.w_el_right * e1 + self.w_e2_right * e2
+
+        # Output is vector of categorical log probabilities from which we sample an action
+        return y
+
+    def predict(self, x, stoch=True):
+        """Predict next action and distribution over states
+
+        N.b. This function matches the API of the stabe-baselines policies.
+
+        Args:
+            x (int): Input feature vector
+
+            stoch (bool): If true, sample action stochastically
+
+        Returns:
+            (int): Sampled action
+            (None): Placeholder to ensure this function matches the stable-baselines
+                policy interface. Some policies use this argument to return a prediction
+                over future state distributions - we do not.
+        """
+        probs = torch.exp(self(x))
+        if stoch:
+            dist = torch.distributions.Categorical(probs)
+            a = dist.sample()
+        else:
+            a = torch.argmax(probs)
+        return a, None
+
+    def log_prob_for_state(self, x):
+        """Get the action log probability vector for the given feature vector
+
+        Args:
+            x (numpy array): Current feature vector
+
+        Returns:
+            (numpy array): Log probability distribution over actions
+        """
+        return self(x)
+
+    def log_prob_for_state_action(self, x, a):
+        """Get the log probability for the given state, action
+
+        Args:
+            x (int): Current feature vector phi(s, a, s')
+            a (int): Chosen action
+
+        Returns:
+            (float): Log probability of choosing a from phi(s, a, s')
+        """
+        return self(x)[int(a.item())]
+
+
 def main():
     """Main function"""
 
