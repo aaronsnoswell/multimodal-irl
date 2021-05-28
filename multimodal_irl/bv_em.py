@@ -795,6 +795,14 @@ class SigmaGIRLEMSolver(EMSolver):
         """
 
         # Step 1 - we mirror the feature function
+        phi_mirrored = MirrorWrap(phi)
+
+        # XXX ajs 28/May/2021 We assume that these items (computed during the previous .mstep()) correspond to the
+        # reward list we are passed as an argument
+        policies = self._policies
+        opt_jac_means = self._opt_jac_means
+        jac_covs = self._jac_covs
+
         num_modes = len(mode_weights)
 
         # Shortcut for K=1
@@ -1153,8 +1161,10 @@ def bv_em(
         solver.pre_it(iteration)
 
         # Compute LL
+        print("Compute NLL")
         nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
         nll_history.append(nll)
+        print(nll)
 
         nll_delta = np.nan
         if len(nll_history) >= 2:
@@ -1162,8 +1172,10 @@ def bv_em(
             nll_delta = np.diff(nll_history)[-1]
 
         # E-step - update responsibility matrix, mixture component weights
+        print("E-Step")
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
         resp_history.append(resp)
+        print(resp)
 
         resp_delta = np.nan
         if len(resp_history) >= 2:
@@ -1174,8 +1186,10 @@ def bv_em(
         mode_weights_history.append(mode_weights)
 
         # M-step - solve for new reward parameters
+        print("M-Step")
         rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
         rewards_history.append(rewards)
+        print([r.theta for r in rewards])
 
         # Call user post-iteration callback
         solver.post_it(
