@@ -44,8 +44,8 @@ class ElementWorldEnv(gym.Env):
     ACTION_SYMBOLS = {
         "up": "↑",
         "down": "↓",
-        "left": "←",
-        "right": "→",
+        "left": "<",  # "←",
+        "right": ">",  # "→",
     }
 
     ACTION_SYMBOLS_A2SYM = {0: "↑", 1: "↓", 2: "←", 3: "→"}
