@@ -36,6 +36,7 @@ from mdp_extras import (
     BoltzmannExplorationPolicy,
     DiscreteExplicitExtras,
     DiscreteImplicitExtras,
+    MirrorWrap,
 )
 
 
@@ -180,7 +181,6 @@ class EMSolver(abc.ABC):
             reward_range (tuple): Lower and upper reward function parameter bounds
 
             num_restarts (int): Number of random clusterings to perform
-            mean_center (bool): If true, center feature vectors
             with_resp (bool): Also return responsibility matrix as first return variable
 
         Returns:
@@ -730,9 +730,11 @@ class SigmaGIRLEMSolver(EMSolver):
 
     def __init__(
         self,
-        policy_factory,
-        mstep_restarts=100,
-        mstep_num_bc_epochs=1000,
+        PolicyClass,
+        mstep_policy_kwargs={},
+        mstep_bc_restarts=5,
+        mstep_opt_restarts=50,
+        mstep_num_bc_epochs=500,
         minimize_kwargs={},
         minimize_options={},
         pre_it=lambda i: None,
@@ -741,10 +743,14 @@ class SigmaGIRLEMSolver(EMSolver):
         """C-tor
 
         Args:
-            policy_factory (callable): A callable that returns a Sigma-GIRL policy compatible with the
-                current MDP object, ready for behaviour cloning
+            PolicyClass (mdp_extras.TorchPolicy): Policy class that can be called to construct new policy
+                objects using the mdp_extras.TorchPolicy API.
 
-            mstep_restarts (int): Number of random re-starts to perform for each mode during the M-Step
+            mstep_policy_kwargs (dict): Keyword arguments to pass to PolicyClass constructor, e.g. this should
+                specify the output (action) dimension of the policy, and the number of hidden units, but *not* the
+                input dimension, as this will be over-written in the .mstep() method
+            mstep_bc_restarts (int): Number of random re-starts to perform for each mode during the M-Step (behaviour cloning part)
+            mstep_opt_restarts (int): Number of random re-starts to perform for each mode during the M-Step (reward optimization part)
             mstep_num_bc_epochs (int): Number of behaviour clonining epochs to perform for each mode during
                 the M-Step
 
@@ -759,23 +765,28 @@ class SigmaGIRLEMSolver(EMSolver):
         """
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
 
-        self.policy_factory = policy_factory
-        self.mstep_restarts = mstep_restarts
+        self.PolicyClass = PolicyClass
+        self.mstep_policy_kwargs = mstep_policy_kwargs
+        self.mstep_restarts = mstep_opt_restarts
+        self.mstep_bc_restarts = mstep_bc_restarts
         self.mstep_num_bc_epochs = mstep_num_bc_epochs
 
-    def estep(
-        self, xtr, phi, mode_weights, rewards, policies, jac_means, jac_covs, rollouts
-    ):
-        """Compute responsibility matrix using current SigmaGIRL rewards, BC policies, and jacboain distributions
+        # Internal storage for latest policy, optimal jacobian mean, and jacobian covariance matrices
+        # Each list holds one item for each behaviour intent
+        # These items are updated each time the mstep method is called
+        # XXX ajs 28/May/2021 This assumes that the rewards returned from mstep don't get re-ordered outside this class!!!
+        self._policies = None
+        self._opt_jac_means = None
+        self._jac_covs = None
+
+    def estep(self, xtr, phi, mode_weights, rewards, rollouts):
+        """Compute responsibility matrix using current SigmaGIRL rewards
 
         Args:
             xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (numpy array): Weights for each behaviour mode
             rewards (list): List of mdp_extras.Linear reward functions, one for each mode
-            policies (list): List of Sigma-GIRL policy classes, one for each mode
-            jac_means (list): List of Sigma-GIRL empirical jacobian means, one for each mode
-            jac_covs (list): List of Sigma-GIRL empirical jacobian covariance matrices, one for each mode
             rollouts (list): List of (s, a) rollouts
 
         Returns:
@@ -783,6 +794,7 @@ class SigmaGIRLEMSolver(EMSolver):
                 parameters and mode weights.
         """
 
+        # Step 1 - we mirror the feature function
         num_modes = len(mode_weights)
 
         # Shortcut for K=1
@@ -790,16 +802,14 @@ class SigmaGIRLEMSolver(EMSolver):
             return np.array([np.ones(len(rollouts))]).T
 
         resp = np.ones((len(rollouts), num_modes))
-        for mode_idx, (mode_weight, reward, pi, jac_mean, jac_cov) in enumerate(
-            zip(mode_weights, rewards, jac_means, jac_covs)
+        for mode_idx, (mode_weight, pi, opt_jac_mean, jac_cov) in enumerate(
+            zip(mode_weights, policies, opt_jac_means, jac_covs)
         ):
 
-            # Compute optimal jacobian mean from empirical
-            opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward)
 
             # Compute jacobian for each demonstration trajectory
             demo_jacs = np.array(
-                [traj_jacobian(pi, phi, d, xtr.gamma) for d in rollouts]
+                [traj_jacobian(pi, phi_mirrored, d, xtr.gamma) for d in rollouts]
             )
 
             # Compute path log likelihoods under this reward
@@ -809,8 +819,15 @@ class SigmaGIRLEMSolver(EMSolver):
             path_probs = mode_weight * np.exp(path_lls)
             resp[:, mode_idx] = path_probs
 
+        print(resp)
+
         # Each demonstration gets a mass of 1 to allocate between modes
         resp /= np.sum(resp, axis=1, keepdims=True)
+
+        # If there were values that recieved 0 probability mass from all modes, set them to uniform prob.
+        resp = np.nan_to_num(resp, nan=1.0 / resp.shape[1])
+
+        print(resp)
 
         return resp
 
@@ -824,7 +841,8 @@ class SigmaGIRLEMSolver(EMSolver):
     ):
         """Compute reward parameters given responsibility matrix
 
-        TODO ajs 25/May/2021 How to account for reward range with Sigma-GIRL?
+        Internally, we mirror and un-mirror the feature function using mdp_extras.MirrorWrap because Sigma-GIRL only
+        supports reward parameters on a probability simplex. This process should be transparent to the calling method.
 
         Args:
             xtr (DiscreteExplicitExtras): Extras object for multi-modal MDP
@@ -835,33 +853,71 @@ class SigmaGIRLEMSolver(EMSolver):
             reward_range (tuple): Optional reward parameter min and max values
 
         Returns:
-            (list): List of Sigma-GIRL policy objects
             (list): List of Linear reward functions
-            (list): List of optimal jacobian means
-            (list): List of empirical jacobian covariance matrices
         """
+
+        # Step 1 - we mirror the feature function
+        phi_mirrored = MirrorWrap(phi)
 
         num_rollouts, num_modes = resp.shape
 
+        from multimodal_irl.envs import ElementWorldEnv
+
         policies = []
-        rewards = []
+        rewards_mirrored = []
         opt_jac_means = []
         jac_covs = []
         for mode_idx in range(num_modes):
 
+            # Slice demonstration weights out
             rollout_weights = resp[:, mode_idx]
 
-            # Behaviour clone against weighted dataset
-            pi = self.policy_factory().behaviour_clone(
-                rollouts,
-                phi,
-                num_epochs=self.mstep_num_bc_epochs,
-                weights=rollout_weights,
-            )
+            # Generate a new policy
+            self.mstep_policy_kwargs["in_dim"] = len(phi_mirrored)
+            pics = []
+            losses = []
+            for _ in range(self.mstep_bc_restarts):
+                pic = self.PolicyClass(**self.mstep_policy_kwargs)
+                loss = pic.behaviour_clone(
+                    rollouts,
+                    phi_mirrored,
+                    num_epochs=self.mstep_num_bc_epochs,
+                    weights=rollout_weights,
+                )
+                # print(loss)
+                # print(
+                #     np.array(
+                #         [
+                #             ElementWorldEnv(
+                #                 num_elements=resp.shape[1]
+                #             ).ACTION_SYMBOLS_A2SYM[
+                #                 int(pic.predict((phi_mirrored(s)), stoch=False)[0])
+                #             ]
+                #             for s in xtr.states
+                #         ]
+                #     ).reshape((int(sum(xtr.terminal_state_mask)), -1))
+                # )
+                pics.append(pic)
+                losses.append(loss)
+            pi = pics[np.argmin(losses)]
             policies.append(pi)
 
+            # print("============ Selected policy")
+            # print(
+            #     np.array(
+            #         [
+            #             ElementWorldEnv(
+            #                 num_elements=resp.shape[1]
+            #             ).ACTION_SYMBOLS_A2SYM[
+            #                 int(pi.predict((phi_mirrored(s)), stoch=False)[0])
+            #             ]
+            #             for s in xtr.states
+            #         ]
+            #     ).reshape((int(sum(xtr.terminal_state_mask)), -1))
+            # )
+
             # Find weighted data jacobian
-            all_jacs, jac_mean, jac_cov, p_mat = form_jacobian(pi, phi, rollouts)
+            jac_mean, jac_cov, p_mat = form_jacobian(pi, phi_mirrored, rollouts)
             jac_covs.append(jac_cov)
             d, q = jac_mean.shape
 
@@ -886,13 +942,31 @@ class SigmaGIRLEMSolver(EMSolver):
                     evaluations.append([res.x, res.fun])
             params, losses = zip(*evaluations)
             reward_weights = params[np.argmin(losses)]
-            rewards.append(Linear(reward_weights))
+            rewards_mirrored.append(Linear(reward_weights))
 
             # Find weighted data optimal jacobian mean
             opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward_weights)
             opt_jac_means.append(opt_jac_mean)
 
-        return policies, rewards, opt_jac_means, jac_covs
+        # Store new policies, optimal jacobian means, and jacobian covariances
+        del self._policies
+        self._policies = policies
+        del self._opt_jac_means
+        self._opt_jac_means = opt_jac_means
+        del self._jac_covs
+        self._jac_covs = jac_covs
+
+        # Final step - Un-mirror the learned rewards and re-scale to the requested reward range
+        rewards = []
+        for r_mirrored in rewards_mirrored:
+            r = phi_mirrored.unupdate_reward(r_mirrored)
+            r_param = r.theta
+            r_param_scaled = np.interp(
+                r_param, (r_param.min(), r_param.max()), reward_range
+            )
+            rewards.append(Linear(r_param_scaled))
+
+        return rewards
 
     def mixture_nll(
         self,
@@ -900,10 +974,7 @@ class SigmaGIRLEMSolver(EMSolver):
         phi,
         mode_weights,
         rewards,
-        policies,
-        opt_jac_means,
-        jac_covs,
-        demonstrations,
+        rollouts,
     ):
         """Find the average negative log-likelihood of a MaxLikelihood mixture model
 
@@ -912,30 +983,33 @@ class SigmaGIRLEMSolver(EMSolver):
             phi (mdp_extras.FeatureFunction): Feature function
             mode_weights (list): List of prior probabilities, one for each mode
             reawards (list): List of Linear rewards, one for each mode
-            policies (list): List of Sigma-GIRL policy objects, one for each mode
-            opt_jac_means (list): List of optimal jacobian mean matrices, one for each mode
-            jac_covs (list): List of empirical jacobian covariance matrices, one for each mode
-            demonstrations (list): List of state-action rollouts
+            rollouts (list): List of state-action rollouts
 
         Returns:
             (float): Log Likelihood of the rollouts under the given mixture model
         """
 
+        # Step 1 - we mirror the feature function
+        phi_mirrored = MirrorWrap(phi)
+
+        # XXX ajs 28/May/2021 We assume that these items correspond to the reward list we are passed
+        policies = self._policies
+        opt_jac_means = self._opt_jac_means
+        jac_covs = self._jac_covs
+
         # Pre-compute path probabilities under each mode
         path_probs = []
-        for pi, opt_jac_mean, jac_cov in zip(
-            rewards, policies, opt_jac_means, jac_covs
-        ):
+        for pi, opt_jac_mean, jac_cov in zip(policies, opt_jac_means, jac_covs):
             rollout_jacobians = np.array(
-                [traj_jacobian(pi, phi, traj, xtr.gamma) for traj in demonstrations]
+                [traj_jacobian(pi, phi_mirrored, traj, xtr.gamma) for traj in rollouts]
             )
             path_probs.append(
-                gradient_path_logprobs(opt_jac_mean, jac_cov, rollout_jacobians)
+                np.exp(gradient_path_logprobs(opt_jac_mean, jac_cov, rollout_jacobians))
             )
         path_probs = np.array(path_probs)
 
         trajectory_mixture_lls = []
-        for demo_idx in range(len(demonstrations)):
+        for demo_idx in range(len(rollouts)):
             # Sum at this level, then take log at this level
             trajectory_mixture_lls.append(
                 np.log(
@@ -951,102 +1025,6 @@ class SigmaGIRLEMSolver(EMSolver):
         mixture_ll = np.mean(trajectory_mixture_lls)
 
         return -1.0 * mixture_ll
-
-    def init_kmeans(
-        self,
-        xtr,
-        phi,
-        rollouts,
-        num_clusters,
-        reward_range,
-        num_restarts=5000,
-        with_resp=False,
-    ):
-        """Initialize mixture model with KMeans (hard clustering)
-
-        Args:
-            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
-            phi (mdp_extras.FeatureFunction): Feature function
-            rollouts (list): List of (s, a) rollouts
-            num_clusters (int): Number of mixture components
-            reward_range (tuple): Lower and upper reward function parameter bounds
-
-            num_restarts (int): Number of random clusterings to perform
-            mean_center (bool): If true, center feature vectors
-            with_resp (bool): Also return responsibility matrix as first return variable
-
-        Returns:
-            (numpy array): Initial mixture component weights
-            (list): List of initial Sigma-GIRL policy objects
-            (list): List of mdp_extras.Linear initial reward functions
-            (list): List of initial optimal jacobian means
-            (list): List of initial empirical jacobian covariance matrices
-        """
-
-        ret = super().init_kmeans(
-            xtr,
-            phi,
-            rollouts,
-            num_clusters,
-            reward_range,
-            num_restarts=num_restarts,
-            with_resp=with_resp,
-        )
-
-        # Explode out mode 'rewards' from Sigma-GIRL M-Step
-        if with_resp:
-            soft_initial_clusters, mode_weights, rewards = ret
-            return (soft_initial_clusters, mode_weights, *rewards)
-        else:
-            mode_weights, rewards = ret
-            return (mode_weights, *rewards)
-
-    def init_gmm(
-        self,
-        xtr,
-        phi,
-        rollouts,
-        num_clusters,
-        reward_range,
-        num_restarts=5000,
-        with_resp=False,
-    ):
-        """Initialize mixture model with GMM (soft clustering)
-
-        Args:
-            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
-            phi (mdp_extras.FeatureFunction): Feature function
-            rollouts (list): List of (s, a) rollouts
-            num_clusters (int): Number of mixture components
-            reward_range (tuple): Lower and upper reward function parameter bounds
-
-            num_restarts (int): Number of random clusterings to perform
-            with_resp (bool): Also return responsibility matrix as first return variable
-
-        Returns:
-            (numpy array): Initial mixture component weights
-            (list): List of initial Sigma-GIRL policy objects
-            (list): List of mdp_extras.Linear initial reward functions
-            (list): List of initial optimal jacobian means
-            (list): List of initial empirical jacobian covariance matrices
-        """
-        ret = super().init_kmeans(
-            xtr,
-            phi,
-            rollouts,
-            num_clusters,
-            reward_range,
-            num_restarts=num_restarts,
-            with_resp=with_resp,
-        )
-
-        # Explode out mode 'rewards' from Sigma-GIRL M-Step
-        if with_resp:
-            soft_initial_clusters, mode_weights, rewards = ret
-            return (soft_initial_clusters, mode_weights, *rewards)
-        else:
-            mode_weights, rewards = ret
-            return (mode_weights, *rewards)
 
 
 class MeanOnlyEMSolver(MaxEntEMSolver):
