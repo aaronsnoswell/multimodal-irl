@@ -12,6 +12,14 @@ from unimodal_irl.sw_maxent_irl import maxent_path_logprobs
 
 
 class ElementWorldEnv(gym.Env):
+    """ElementWorld Environment
+
+    - The feature function dimensions are: Start, Goal, Element 1, Element 2, ...
+       So, e.g. Element 1's reward function is -1, 0, -1, -10
+
+    - To print or render to console e.g. the list of states, do .reshape((-1, width))
+
+    """
 
     # Rewards values
     REWARD_VALUES = {"very_bad": -10.0, "bad": -1.0, "meh": 0.0}

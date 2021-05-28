@@ -25,7 +25,13 @@ from experiments.utils import (
     mongo_config,
     geometric_distribution,
 )
-from multimodal_irl.bv_em import MaxEntEMSolver, MaxLikEMSolver, bv_em, MeanOnlyEMSolver
+from multimodal_irl.bv_em import (
+    MaxEntEMSolver,
+    MaxLikEMSolver,
+    SigmaGIRLEMSolver,
+    bv_em,
+    MeanOnlyEMSolver,
+)
 
 from mdp_extras import (
     OptimalPolicy,
@@ -168,6 +174,11 @@ def element_world_v4(
             xtr_p = xtr
             train_demos_p = train_demos
             test_demos_p = test_demos
+        elif algorithm == "SigmaGIRL":
+            solver = SigmaGIRLEMSolver()
+            xtr_p = xtr
+            train_demos_p = train_demos
+            test_demos_p = test_demos
         else:
             raise ValueError
     elif reward_initialisation == "MeanOnly":
@@ -268,6 +279,11 @@ def element_world_v4(
         _, test_demos_p = padding_trick(xtr, test_demos)
     elif algorithm == "MaxLik":
         solver = MaxLikEMSolver(post_it=post_em_iteration)
+        xtr_p = xtr
+        train_demos_p = train_demos
+        test_demos_p = test_demos
+    elif algorithm == "SigmaGIRL":
+        solver = SigmaGIRLEMSolver(post_it=post_em_iteration)
         xtr_p = xtr
         train_demos_p = train_demos
         test_demos_p = test_demos
@@ -468,15 +484,15 @@ def element_world_eval(
     non_data_perf=None,
 ):
     """Evaluate a ElementWorld mixture model
-    
+
     TODO ajs 13/Jan/2020 Optimize this function - it's sloooow!
-    
+
     Args:
         TODO
         non_data_perf (dict): If passed, this dictionary will be used to look up
             existing performance stats for the evd/ile metric - saves re-computing it
             across test/training sets.
-    
+
     Returns:
         TODO
     """
@@ -531,6 +547,10 @@ def element_world_eval(
         nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
     elif isinstance(solver, MaxLikEMSolver):
         nll = solver.mixture_nll(xtr, phi, mixture_weights, rewards, demos)
+    elif isinstance(solver, SigmeGIRLEMSolver):
+        raise NotImplementedError
+        # TODO
+        nll = solver.mixture_nll(xtr, phi, mixture_weights, rewards, demos)
     else:
         raise ValueError
 
@@ -554,6 +574,10 @@ def element_world_eval(
             ml_paths = element_world_mixture_ml_path(
                 xtr, phi, demos, maxlikelihood_ml_path, mixture_weights, rewards
             )
+        elif isinstance(solver, SigmeGIRLEMSolver):
+            raise NotImplementedError
+            # TODO
+            # Get ML paths from SigmaGIRL mixture
         else:
             raise ValueError
 
@@ -588,7 +612,7 @@ def element_world_eval(
 
 def run(config_updates, mongodb_url="localhost:27017"):
     """Run a single experiment with the given configuration
-    
+
     Args:
         config_updates (dict): Configuration updates
         mongodb_url (str): MongoDB URL, or None if no Mongo observer should be used for
@@ -667,7 +691,7 @@ def main():
         required=False,
         default="MaxEnt",
         type=str,
-        choices=("MaxEnt", "MaxLik"),
+        choices=("MaxEnt", "MaxLik", "SigmaGIRL"),
         help="IRL model + algorithm to use in EM inner loop",
     )
 
@@ -768,16 +792,16 @@ def main():
     print(f"META: MongoDB Server URL: {mongodb_url}")
 
     # Parallel loop
-    with tqdm.tqdm(total=len(configs)) as pbar:
-        with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-            tasks = {executor.submit(run, config, mongodb_url) for config in configs}
-            for future in futures.as_completed(tasks):
-                # arg = tasks[future]; result = future.result()
-                pbar.update(1)
+    # with tqdm.tqdm(total=len(configs)) as pbar:
+    #     with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+    #         tasks = {executor.submit(run, config, mongodb_url) for config in configs}
+    #         for future in futures.as_completed(tasks):
+    #             # arg = tasks[future]; result = future.result()
+    #             pbar.update(1)
 
-    # # Debugging loop
-    # for config in tqdm.tqdm(configs):
-    #     run(config, mongodb_url)
+    # Debugging loop
+    for config in tqdm.tqdm(configs):
+        run(config, mongodb_url)
 
 
 if __name__ == "__main__":

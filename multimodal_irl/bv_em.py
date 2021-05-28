@@ -1227,25 +1227,33 @@ def main():
     from mdp_extras import OptimalPolicy, vi, MLPCategoricalPolicy
     from multimodal_irl.envs import ElementWorldEnv, element_world_extras
 
-    env = ElementWorldEnv()
-    xtr, phi, rewards = element_world_extras(env)
+    num_elements = 2
+    env = ElementWorldEnv(num_elements=num_elements)
+    xtr, phi, gt_rewards = element_world_extras(env)
 
-    # Prepare policy factory
-    policy_hidden_size = 30
-    policy_factory = lambda: MLPCategoricalPolicy(
-        len(phi), len(xtr.actions), hidden_size=policy_hidden_size
-    )
+    print("GT Rewards:")
+    print(gt_rewards[0].theta)
+    print(gt_rewards[1].theta)
 
+    env.reset()
+    print(env.render())
+
+    print("Collecting data")
     # Collect dataset of demonstration (s, a) trajectories from expert
-    num_rollouts_per_mode = 100
+    num_rollouts_per_mode = 10
     demos = []
-    for reward in rewards:
+    for reward in gt_rewards:
         _, q_star = vi(xtr, phi, reward)
         pi_star = OptimalPolicy(q_star, stochastic=True)
         demos.extend(pi_star.get_rollouts(env, num_rollouts_per_mode))
 
-    solver = SigmaGIRLEMSolver(policy_factory)
-
+    print("Solving")
+    # Prepare policy factory
+    policy_hidden_size = 50
+    policy_factory = lambda: MLPCategoricalPolicy(
+        len(phi), len(xtr.actions), hidden_size=policy_hidden_size
+    )
+    solver = SigmaGIRLEMSolver(policy_factory, mstep_num_bc_epochs=3000)
     (
         soft_initial_clusters,
         mode_weights,
@@ -1253,7 +1261,40 @@ def main():
         rewards,
         opt_jac_means,
         jac_covs,
-    ) = solver.init_kmeans(xtr, phi, demos, 4, reward_range=(0.0, 1.0), with_resp=True)
+    ) = solver.init_kmeans(
+        xtr, phi, demos, num_elements, reward_range=(0.0, 1.0), with_resp=True
+    )
+
+    print("Initial clusters:")
+    print(soft_initial_clusters)
+
+    print("Rewards:")
+    print(rewards[0].theta)
+    print(rewards[1].theta)
+
+    print("Policy 1")
+    print(
+        np.array(
+            [
+                env.ACTION_SYMBOLS_A2SYM[
+                    int(policies[0].predict((phi(s)), stoch=False)[0])
+                ]
+                for s in xtr.states
+            ]
+        ).reshape(-1, 6)
+    )
+
+    print("Policy 2")
+    print(
+        np.array(
+            [
+                env.ACTION_SYMBOLS_A2SYM[
+                    int(policies[0].predict((phi(s)), stoch=False)[0])
+                ]
+                for s in xtr.states
+            ]
+        ).reshape(-1, 6)
+    )
 
     print("Here")
 
