@@ -350,14 +350,34 @@ def element_world_extras(env):
         env._gamma,
     )
 
-    phi = Disjoint(Disjoint.Type.OBSERVATION, xtr, env._feature_matrix.flatten())
+    # phi = Disjoint(Disjoint.Type.OBSERVATION, xtr, env._feature_matrix.flatten())
+    # Hack to get linear reward function
+    phi = Indicator(Disjoint.Type.OBSERVATION, xtr)
 
     rewards = []
     for target in range(2, env._num_elements + 2):
-        r = np.zeros(env._num_elements + 2) + env.REWARD_VALUES["very_bad"]
-        r[target] = env.REWARD_VALUES["bad"]
-        r[0] = env.REWARD_VALUES["bad"]
-        r[1] = env.REWARD_VALUES["meh"]
+        # r = np.zeros(env._num_elements + 2) + env.REWARD_VALUES["very_bad"]
+        # r[target] = env.REWARD_VALUES["bad"]
+        # r[0] = env.REWARD_VALUES["bad"]
+        # r[1] = env.REWARD_VALUES["meh"]
+        # reward = Linear(r)
+
+        # Hack to get linear reward function
+        r = []
+        for f in env._feature_matrix.flatten():
+            if f == 0:
+                # Start state
+                r.append(env.REWARD_VALUES["bad"])
+            elif f == 1:
+                # Goal state
+                r.append(env.REWARD_VALUES["meh"])
+            elif f == target:
+                # Target Element state
+                r.append(env.REWARD_VALUES["bad"])
+            else:
+                # Non-Target Element state
+                r.append(env.REWARD_VALUES["very_bad"])
+        r = np.array(r)
         reward = Linear(r)
 
         v_star = vi(xtr, phi, reward)[0].reshape(env._height, env._width)

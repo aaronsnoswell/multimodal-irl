@@ -826,15 +826,11 @@ class SigmaGIRLEMSolver(EMSolver):
             path_probs = mode_weight * np.exp(path_lls)
             resp[:, mode_idx] = path_probs
 
-        print(resp)
-
         # Each demonstration gets a mass of 1 to allocate between modes
         resp /= np.sum(resp, axis=1, keepdims=True)
 
         # If there were values that recieved 0 probability mass from all modes, set them to uniform prob.
         resp = np.nan_to_num(resp, nan=1.0 / resp.shape[1])
-
-        print(resp)
 
         return resp
 
@@ -868,18 +864,20 @@ class SigmaGIRLEMSolver(EMSolver):
 
         num_rollouts, num_modes = resp.shape
 
-        from multimodal_irl.envs import ElementWorldEnv
+        # from multimodal_irl.envs import ElementWorldEnv
 
         policies = []
         rewards_mirrored = []
         opt_jac_means = []
         jac_covs = []
         for mode_idx in range(num_modes):
+            print(f"M-Step - Intent {mode_idx+1}")
 
             # Slice demonstration weights out
             rollout_weights = resp[:, mode_idx]
 
             # Generate a new policy
+            print(f"M-Step - BC")
             self.mstep_policy_kwargs["in_dim"] = len(phi_mirrored)
             pics = []
             losses = []
@@ -924,11 +922,13 @@ class SigmaGIRLEMSolver(EMSolver):
             # )
 
             # Find weighted data jacobian
+            print(f"M-Step - form_jacobian")
             jac_mean, jac_cov, p_mat = form_jacobian(pi, phi_mirrored, rollouts)
             jac_covs.append(jac_cov)
             d, q = jac_mean.shape
 
             # Run optimization here
+            print(f"M-Step - optimize")
             evaluations = []
             while len(evaluations) < self.mstep_restarts - 1:
                 # Choose random initial guess
@@ -952,6 +952,7 @@ class SigmaGIRLEMSolver(EMSolver):
             rewards_mirrored.append(Linear(reward_weights))
 
             # Find weighted data optimal jacobian mean
+            print(f"M-Step - optimal_jacobian_mean")
             opt_jac_mean = optimal_jacobian_mean(jac_mean, jac_cov, reward_weights)
             opt_jac_means.append(opt_jac_mean)
 
@@ -1360,12 +1361,16 @@ def main():
     from multimodal_irl.envs import ElementWorldEnv, element_world_extras
 
     num_elements = 2
-    env = ElementWorldEnv(num_elements=num_elements)
+    width = 6
+    reward_range = (-10.0, 0.0)
+    env = ElementWorldEnv(
+        num_elements=num_elements, rotate=False, element_zone_size=3, width=width
+    )
     xtr, phi, gt_rewards = element_world_extras(env)
 
     print("GT Rewards:")
-    print(gt_rewards[0].theta)
-    print(gt_rewards[1].theta)
+    print(gt_rewards[0].theta.reshape((-1, width)))
+    print(gt_rewards[1].theta.reshape((-1, width)))
 
     env.reset()
     print(env.render())
@@ -1373,60 +1378,60 @@ def main():
     print("Collecting data")
     # Collect dataset of demonstration (s, a) trajectories from expert
     num_rollouts_per_mode = 10
-    demos = []
+    rollouts = []
     for reward in gt_rewards:
         _, q_star = vi(xtr, phi, reward)
         pi_star = OptimalPolicy(q_star, stochastic=True)
-        demos.extend(pi_star.get_rollouts(env, num_rollouts_per_mode))
+        rollouts.extend(pi_star.get_rollouts(env, num_rollouts_per_mode))
 
-    print("Solving")
-    # Prepare policy factory
-    policy_hidden_size = 50
-    policy_factory = lambda: MLPCategoricalPolicy(
-        len(phi), len(xtr.actions), hidden_size=policy_hidden_size
+    def post_it(
+        solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta
+    ):
+        print(f"Iteration {iteration}")
+        print(mode_weights)
+        print(nll, nll_delta)
+        print(resp)
+        print(resp_delta)
+
+    # Prepare solver
+    solver = SigmaGIRLEMSolver(
+        MLPCategoricalPolicy,
+        mstep_policy_kwargs=dict(out_dim=len(xtr.actions), hidden_size=30),
+        mstep_num_bc_epochs=1000,
+        post_it=post_it,
     )
-    solver = SigmaGIRLEMSolver(policy_factory, mstep_num_bc_epochs=3000)
-    (
-        soft_initial_clusters,
-        mode_weights,
-        policies,
-        rewards,
-        opt_jac_means,
-        jac_covs,
-    ) = solver.init_kmeans(
-        xtr, phi, demos, num_elements, reward_range=(0.0, 1.0), with_resp=True
+
+    mode_weights, rewards = solver.init_kmeans(
+        xtr, phi, rollouts, num_elements, reward_range=reward_range
     )
-
-    print("Initial clusters:")
-    print(soft_initial_clusters)
-
     print("Rewards:")
-    print(rewards[0].theta)
-    print(rewards[1].theta)
+    print(np.round(rewards[0].theta.reshape((-1, width)), 3))
+    print(np.round(rewards[1].theta.reshape((-1, width)), 3))
 
-    print("Policy 1")
-    print(
-        np.array(
-            [
-                env.ACTION_SYMBOLS_A2SYM[
-                    int(policies[0].predict((phi(s)), stoch=False)[0])
-                ]
-                for s in xtr.states
-            ]
-        ).reshape(-1, 6)
+    bv_em(
+        solver,
+        xtr,
+        phi,
+        rollouts,
+        num_elements,
+        reward_range,
+        mode_weights=mode_weights,
+        rewards=rewards,
+        max_iterations=None,
+        break_on_nll_increase=True,
     )
 
-    print("Policy 2")
-    print(
-        np.array(
-            [
-                env.ACTION_SYMBOLS_A2SYM[
-                    int(policies[0].predict((phi(s)), stoch=False)[0])
-                ]
-                for s in xtr.states
-            ]
-        ).reshape(-1, 6)
-    )
+    # print("Policy 1")
+    # print(
+    #     np.array(
+    #         [
+    #             env.ACTION_SYMBOLS_A2SYM[
+    #                 int(policies[0].predict((phi(s)), stoch=False)[0])
+    #             ]
+    #             for s in xtr.states
+    #         ]
+    #     ).reshape(-1, 6)
+    # )
 
     print("Here")
 
