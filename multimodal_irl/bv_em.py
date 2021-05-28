@@ -103,15 +103,33 @@ class EMSolver(abc.ABC):
         """"""
         raise NotImplementedError
 
-    def init_random(self, phi, num_clusters, reward_range, with_resp=False):
+    def init_random(
+        self,
+        xtr,
+        phi,
+        rollouts,
+        num_clusters,
+        reward_range,
+        with_resp=False,
+    ):
         """Initialize mixture model uniform randomly
 
+        For random initialisation the generative model samples mode weights first from the
+            Dirichlet distribution, then samples trajectory weights for each mode. We do
+            things in this order, because the reverse leads to a strong bias toward uniform
+            mode weights.
+
+            Finally, .mstep() is called to initialise the reward parameters from the
+            responsibility matrix.
+
         Args:
+            xtr (mdp_extras.DiscreteExplicitExtras): MDP Extras
             phi (mdp_extras.FeatureFunction): Feature function
+            rollouts (list): List of (s, a) rollouts
             num_clusters (int): Number of mixture components
             reward_range (tuple): Lower and upper reward function parameter bounds
 
-            with_resp (bool): Also return responsibility matrix
+            with_resp (bool): Also return responsibility matrix as first return variable
 
         Returns:
             (numpy array): Initial mixture component weights
@@ -122,17 +140,25 @@ class EMSolver(abc.ABC):
             1
         )[0]
 
-        print("Random\n", mode_weights)
+        soft_initial_clusters = np.zeros((len(rollouts), num_clusters))
+        for wi, w in enumerate(mode_weights):
+            trajectory_weights = dirichlet(
+                [1.0 / len(rollouts) for _ in range(len(rollouts))]
+            ).rvs(1)[0]
+            soft_initial_clusters[:, wi] = w * trajectory_weights
+        soft_initial_clusters /= np.sum(soft_initial_clusters, axis=1, keepdims=True)
 
-        rewards = [
-            Linear(np.random.uniform(*reward_range, len(phi)))
-            for _ in range(num_clusters)
-        ]
+        print("Random\n", soft_initial_clusters, "\n", mode_weights)
+
+        # Compute initial rewards
+        rewards = self.mstep(
+            xtr, phi, soft_initial_clusters, rollouts, reward_range=reward_range
+        )
 
         if not with_resp:
             return mode_weights, rewards
         else:
-            raise NotImplementedError
+            return soft_initial_clusters, mode_weights, rewards
 
     def init_kmeans(
         self,
