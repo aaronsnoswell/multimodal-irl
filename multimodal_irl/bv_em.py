@@ -897,8 +897,12 @@ class SigmaGIRLEMSolver(EMSolver):
 
         # Pre-compute path probabilities under each mode
         path_probs = []
-        for pi, opt_jac_mean, jac_cov in zip(rewards, policies, opt_jac_mean, jac_covs):
-            rollout_jacobians = np.array([traj_jacobian(pi, phi, traj, xtr.gamma)])
+        for pi, opt_jac_mean, jac_cov in zip(
+            rewards, policies, opt_jac_means, jac_covs
+        ):
+            rollout_jacobians = np.array(
+                [traj_jacobian(pi, phi, traj, xtr.gamma) for traj in demonstrations]
+            )
             path_probs.append(
                 gradient_path_logprobs(opt_jac_mean, jac_cov, rollout_jacobians)
             )
