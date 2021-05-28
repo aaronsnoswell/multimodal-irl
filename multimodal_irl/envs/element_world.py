@@ -69,6 +69,7 @@ class ElementWorldEnv(gym.Env):
         target_element=0,
         wind=0.1,
         gamma=0.99,
+        element_zone_size=3,
         rotate=True,
         seed=None,
     ):
@@ -80,13 +81,14 @@ class ElementWorldEnv(gym.Env):
 
             wind (float): Wind (random action) probability
             gamma (float): Discount factor
+            element_zone_size (int): How many rows per element in the map?
             rotate (bool): Rotate element columns to make the environment more difficult
             seed (int): Random seed to use
         """
         self.seed(seed)
 
         self._width = width
-        self._element_zone_size = 3
+        self._element_zone_size = element_zone_size
         self._height = num_elements * self._element_zone_size
         self._num_elements = num_elements
         self.observation_space = spaces.Discrete(self._width * self._height)
