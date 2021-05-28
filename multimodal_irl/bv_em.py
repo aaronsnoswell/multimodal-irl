@@ -1119,7 +1119,7 @@ def bv_em(
             probability simplex.
         rewards (list): List of initial rewards (mdp_extras.Linear) - if None, reward
             parameters are uniform randomly initialized within reward_range
-        nll_tolerance (float): NLL convergence threshold
+        nll_tolerance (float): NLL convergence threshold - set to zero to disable this check
         resp_tolerance (float): Responsibility matrix convergence threshold
         max_iterations (int): Maximum number of iterations (alternate stopping criterion)
         break_on_nll_increase (bool): The Mixture NLL can sometimes increase (instead of monotonically decreasing as
@@ -1162,13 +1162,17 @@ def bv_em(
         solver.pre_it(iteration)
 
         # Compute LL
-        print("Compute NLL")
-        nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
-        nll_history.append(nll)
-        print(nll)
+        if nll_tolerance != 0.0:
+            print("Compute NLL")
+            nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
+            nll_history.append(nll)
+            print(nll)
+        else:
+            nll = None
+            nll_history.append(nll)
 
         nll_delta = np.nan
-        if len(nll_history) >= 2:
+        if len(nll_history) >= 2 and nll_tolerance != 0.0:
             # Check NLL delta
             nll_delta = np.diff(nll_history)[-1]
 
@@ -1211,7 +1215,7 @@ def bv_em(
                 reason = "Responsibility matrix has converged: \sum_i, sum_k |u_{ik}^{t+1} - u_{ik}^t| <= tol"
                 break
 
-        if len(nll_history) >= 2:
+        if len(nll_history) >= 2 and nll_tolerance != 0.0:
             # Check NLL delta
             nll_delta = np.diff(nll_history)[-1]
             if nll_tolerance is not None and np.abs(nll_delta) <= nll_tolerance:
@@ -1418,6 +1422,7 @@ def main():
         mode_weights=mode_weights,
         rewards=rewards,
         max_iterations=None,
+        nll_tolerance=0.0,
         break_on_nll_increase=True,
     )
 
