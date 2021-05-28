@@ -32,12 +32,21 @@ class ElementWorldEnv(gym.Env):
         "right": 3,
     }
 
+    ACTION_MAP_A2TXT = {
+        0: "up",
+        1: "down",
+        2: "left",
+        3: "right",
+    }
+
     ACTION_SYMBOLS = {
         "up": "↑",
         "down": "↓",
         "left": "←",
         "right": "→",
     }
+
+    ACTION_SYMBOLS_A2SYM = {0: "↑", 1: "↓", 2: "←", 3: "→"}
 
     # Coordinate system is origin at top left, +Y down, +X right
     ACTION_VECTORS = {
