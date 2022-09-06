@@ -511,7 +511,7 @@ class MaxEntEMSolver(EMSolver):
             demonstrations (list): List of state-action rollouts
 
         Returns:
-            (float): Log Likelihood of the rollouts under the given mixture model
+            (float): Negative Log Likelihood of the rollouts under the given mixture model
         """
 
         # Pre-compute path probabilities under each mode (faster this way)
