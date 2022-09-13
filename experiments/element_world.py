@@ -547,7 +547,7 @@ def element_world_eval(
         nll = solver.mixture_nll(xtr_p, phi, mixture_weights, rewards, demos_p)
     elif isinstance(solver, MaxLikEMSolver):
         nll = solver.mixture_nll(xtr, phi, mixture_weights, rewards, demos)
-    elif isinstance(solver, SigmeGIRLEMSolver):
+    elif isinstance(solver, SigmaGIRLEMSolver):
         raise NotImplementedError
         # TODO
         nll = solver.mixture_nll(xtr, phi, mixture_weights, rewards, demos)
