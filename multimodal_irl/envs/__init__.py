@@ -17,3 +17,9 @@ register(
     id="SmallPuddleWorld-v0",
     entry_point="puddle_world.envs:SmallPuddleWorldEnv",
 )
+
+register(
+    id="ElementWorld-v0",
+    entry_point="element_world.envs:ElementWorldEnv",
+)
+
