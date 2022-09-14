@@ -2,6 +2,7 @@ from gym.envs.registration import register
 
 from .puddle_world import *
 from .element_world import *
+from .synthetic_world import *
 
 register(
     id="PuddleWorld-v0",
@@ -23,3 +24,7 @@ register(
     entry_point="element_world.envs:ElementWorldEnv",
 )
 
+register(
+    id="SyntheticWorld-v0",
+    entry_point="synthetic_world.envs:SyntheticWorldEnv",
+)
