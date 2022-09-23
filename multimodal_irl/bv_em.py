@@ -528,10 +528,6 @@ class MaxEntEMSolver(EMSolver):
         rewards = []
         if self.parallel_executor is None:
 
-            import time
-
-            plt.figure()
-
             i = 0
             for m_idx, (mode_demo_weights, mode_theta0) in enumerate(
                 demo_weights_theta0s
