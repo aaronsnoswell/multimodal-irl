@@ -142,14 +142,23 @@ class EMSolver(abc.ABC):
         )[0]
 
         soft_initial_clusters = np.zeros((len(rollouts), num_clusters))
-        for wi, w in enumerate(mode_weights):
+        for wi, w in enumerate(mode_weights):            
             trajectory_weights = dirichlet(
                 [1.0 / len(rollouts) for _ in range(len(rollouts))]
             ).rvs(1)[0]
             soft_initial_clusters[:, wi] = w * trajectory_weights
         soft_initial_clusters /= np.sum(soft_initial_clusters, axis=1, keepdims=True)
 
-        print("Random\n", soft_initial_clusters, "\n", mode_weights)
+        def rand_simplex(num_samples):
+            # Draw samples from unit simplex
+            return dirichlet.rvs(size=num_samples, alpha=alpha)
+
+        soft_initial_clusters = np.zeros((len(rollouts), num_clusters))
+        for i in range(len(rollouts)):
+            soft_initial_clusters[i] = rand_simplex(num_clusters)[0]
+
+        mode_weights = rand_simplex(1)[0]
+        print("soft_initial_clusters\n", soft_initial_clusters, "\n", mode_weights)
 
         # Compute initial rewards
         rewards = self.mstep(
@@ -369,9 +378,13 @@ class MaxEntEMSolver(EMSolver):
         reward_parameter_bounds = None
         if reward_range is not None:
             reward_parameter_bounds = tuple(reward_range for _ in range(len(phi)))
+
         theta0 = [np.zeros(len(phi)) for i in range(num_modes)]
 
-        max_path_length = max(*[len(r) for r in demonstrations])
+        if len(demonstrations) == 1:
+            max_path_length = max([len(r) for r in demonstrations])
+        else:
+            max_path_length = max(*[len(r) for r in demonstrations])
 
         def proc_one(
             xtr,
