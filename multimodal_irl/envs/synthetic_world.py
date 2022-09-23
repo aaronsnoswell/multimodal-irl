@@ -259,7 +259,7 @@ class MDPFeature(FeatureFunction):
         return feature_vector
 
 
-def synthetic_mdp_extras(env):
+def synthetic_world_extras(env):
 
     xtr = DiscreteExplicitExtras(
         env._states,
