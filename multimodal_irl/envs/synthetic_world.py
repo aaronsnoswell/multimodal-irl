@@ -332,10 +332,9 @@ def main():
         for rollout in rollouts:
             # Compute feature vector for each state in rollouts
             states = np.array(rollout)[:, 0]
-            discounted_phis = np.array([
-                e._psis[s] * (e._gamma ** t)
-                for t, s in enumerate(states)
-            ])
+            discounted_phis = np.array(
+                [e._psis[s] * (e._gamma ** t) for t, s in enumerate(states)]
+            )
 
             # Sum discounted feature vectors
             rollout_phi = np.sum(discounted_phis, axis=0)
@@ -382,7 +381,6 @@ def main():
 
         print(res_lbfgs)
         print(x_star)
-
 
         # e.dot_output()
 
