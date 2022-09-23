@@ -1,4 +1,5 @@
 import gym
+import random
 import numpy as np
 import itertools as it
 import matplotlib.pyplot as plt
@@ -82,6 +83,7 @@ class SyntheticWorldEnv(gym.Env):
 
     def seed(self, seed=None):
         """Set seed"""
+        random.seed(seed)
         np.random.seed(seed)
 
     def render(self, mode="human"):
