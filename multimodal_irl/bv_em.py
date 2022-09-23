@@ -3,7 +3,6 @@
 
 import abc
 import cma
-import copy
 import warnings
 import numpy as np
 import itertools as it
@@ -18,24 +17,18 @@ from sklearn.mixture import GaussianMixture
 from unimodal_irl import (
     sw_maxent_irl,
     maxent_path_logprobs,
-    nb_backward_pass_log,
-    nb_backward_pass_log_deterministic_stateonly,
-    log_partition,
     bv_maxlikelihood_irl,
     traj_jacobian,
     form_jacobian,
     pi_gradient_irl,
     optimal_jacobian_mean,
-    gradient_log_likelihood,
     gradient_path_logprobs,
 )
 from mdp_extras import (
     Linear,
-    trajectory_reward,
     vi,
     BoltzmannExplorationPolicy,
     DiscreteExplicitExtras,
-    DiscreteImplicitExtras,
     MirrorWrap,
 )
 
@@ -136,18 +129,20 @@ class EMSolver(abc.ABC):
             (numpy array): Initial mixture component weights
             (list): List of mdp_extras.Linear initial reward functions
         """
-
-        mode_weights = dirichlet([1.0 / num_clusters for _ in range(num_clusters)]).rvs(
-            1
-        )[0]
+        """mode_weights = dirichlet([1.0 / num_clusters for _ in range(num_clusters)]).rvs(1)[0]
 
         soft_initial_clusters = np.zeros((len(rollouts), num_clusters))
         for wi, w in enumerate(mode_weights):            
             trajectory_weights = dirichlet(
                 [1.0 / len(rollouts) for _ in range(len(rollouts))]
             ).rvs(1)[0]
-            soft_initial_clusters[:, wi] = w * trajectory_weights
-        soft_initial_clusters /= np.sum(soft_initial_clusters, axis=1, keepdims=True)
+            print("trajectory_weights.shape", trajectory_weights.shape)
+            print("trajectory_weights", trajectory_weights)
+            soft_initial_clusters[:, wi] = w * trajectory_weights            
+        soft_initial_clusters /= np.sum(soft_initial_clusters, axis=1, keepdims=True)        
+
+        print("Random\n", soft_initial_clusters, "\n", mode_weights)"""
+        alpha = np.ones(num_clusters)
 
         def rand_simplex(num_samples):
             # Draw samples from unit simplex
@@ -280,6 +275,7 @@ class MaxEntEMSolver(EMSolver):
         post_it=lambda solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta: None,
         parallel_executor=None,
         method="L-BFGS-B",
+        min_path_length=None,
     ):
         """C-tor
 
@@ -301,10 +297,14 @@ class MaxEntEMSolver(EMSolver):
                 - L-BFGS-B - Seems to diverge on difficult problems (line search fails)
                 - TNC - Seems to diverge on difficult problems
                 - trust-const - Seems to diverge on difficult problems
+            min_path_length (int): If provided, use this minimum path length for MaxEnt
+                calculations - this will force 2-point gradient estimation, making
+                making optimization slower.
         """
         super().__init__(minimize_kwargs, minimize_options, pre_it, post_it)
         self.parallel_executor = parallel_executor
         self.method = method
+        self.min_path_length = min_path_length
 
     def estep(self, xtr, phi, mode_weights, rewards, demonstrations):
         """Compute responsibility matrix using MaxEnt reward parameters
@@ -328,9 +328,8 @@ class MaxEntEMSolver(EMSolver):
             return np.array([np.ones(len(demonstrations))]).T
 
         weights_rewards = zip(mode_weights, rewards)
-        proc_one = (
-            lambda xtr, phi, mode_weight, mode_reward, demonstrations: mode_weight
-            * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
+        proc_one = lambda xtr, phi, mode_weight, mode_reward, demonstrations: np.exp(
+            maxent_path_logprobs(xtr, phi, mode_reward, demonstrations)
         )
         if self.parallel_executor is None:
             resp = np.ones((len(demonstrations), num_modes))
@@ -397,6 +396,7 @@ class MaxEntEMSolver(EMSolver):
             rollout_weights,
             theta0,
             method="L-BFGS-B",
+            min_path_length=None,
         ):
             phi_bar = phi.demo_average(
                 demonstrations,
@@ -404,15 +404,49 @@ class MaxEntEMSolver(EMSolver):
                 weights=(rollout_weights / np.sum(rollout_weights)),
             )
 
-            if method == "L-BFGS-B":
+            nll_only = False
+            jac = True
+            if min_path_length is not None and min_path_length != 1:
+                warnings.warn(
+                    "min_path_length != 1 - reverting to two-point gradient estimation. This will make optimization slower"
+                )
+                jac = "2-point"
+                nll_only = True
+
+            if method == "CG":
+                res_cg = minimize(
+                    sw_maxent_irl,
+                    theta0,
+                    args=(
+                        xtr,
+                        phi,
+                        phi_bar,
+                        max_path_length,
+                        nll_only,
+                        min_path_length,
+                    ),
+                    method="Newton-CG",
+                    jac=jac,
+                    options={},
+                    **(minimize_kwargs),
+                )
+                x_star = res_cg.x
+            elif method == "L-BFGS-B":
                 res_lbfgs = minimize(
                     sw_maxent_irl,
                     theta0,
-                    args=(xtr, phi, phi_bar, max_path_length),
+                    args=(
+                        xtr,
+                        phi,
+                        phi_bar,
+                        max_path_length,
+                        nll_only,
+                        min_path_length,
+                    ),
                     method="L-BFGS-B",
-                    jac=True,
+                    jac=jac,
                     bounds=reward_parameter_bounds,
-                    options=minimize_options,
+                    options={},
                     **(minimize_kwargs),
                 )
                 x_star = res_lbfgs.x
@@ -420,9 +454,16 @@ class MaxEntEMSolver(EMSolver):
                 res_tnc = minimize(
                     sw_maxent_irl,
                     theta0,
-                    args=(xtr, phi, phi_bar, max_path_length),
+                    args=(
+                        xtr,
+                        phi,
+                        phi_bar,
+                        max_path_length,
+                        nll_only,
+                        min_path_length,
+                    ),
                     method="TNC",
-                    jac=True,
+                    jac=jac,
                     bounds=reward_parameter_bounds,
                     options=minimize_options,
                     **(minimize_kwargs),
@@ -432,11 +473,18 @@ class MaxEntEMSolver(EMSolver):
                 res_slsqp = minimize(
                     sw_maxent_irl,
                     theta0,
-                    args=(xtr, phi, phi_bar, max_path_length),
+                    args=(
+                        xtr,
+                        phi,
+                        phi_bar,
+                        max_path_length,
+                        nll_only,
+                        min_path_length,
+                    ),
                     method="SLSQP",
-                    jac=True,
+                    jac=jac,
                     bounds=reward_parameter_bounds,
-                    options=minimize_options,
+                    options={},
                     **(minimize_kwargs),
                 )
                 x_star = res_slsqp.x
@@ -444,16 +492,22 @@ class MaxEntEMSolver(EMSolver):
                 res_trust_const = minimize(
                     sw_maxent_irl,
                     theta0,
-                    args=(xtr, phi, phi_bar, max_path_length),
+                    args=(
+                        xtr,
+                        phi,
+                        phi_bar,
+                        max_path_length,
+                        nll_only,
+                        min_path_length,
+                    ),
                     method="trust-constr",
-                    jac=True,
+                    jac=jac,
                     bounds=reward_parameter_bounds,
                     options=minimize_options,
                     **(minimize_kwargs),
                 )
                 x_star = res_trust_const.x
             elif method == "CMA-ES":
-                print("Doing CMA-ES")
                 std_dev_init_val = 0.5
                 es = cma.CMAEvolutionStrategy(
                     theta0,
@@ -461,7 +515,8 @@ class MaxEntEMSolver(EMSolver):
                     {"bounds": list(zip(*reward_parameter_bounds)), "verbose": -9},
                 )
                 es.optimize(
-                    sw_maxent_irl, args=(xtr, phi, phi_bar, max_path_length, True)
+                    sw_maxent_irl,
+                    args=(xtr, phi, phi_bar, max_path_length, True, min_path_length),
                 )
                 x_star = es.result[0]
             else:
@@ -472,23 +527,30 @@ class MaxEntEMSolver(EMSolver):
         demo_weights_theta0s = zip(resp.T, theta0)
         rewards = []
         if self.parallel_executor is None:
+
+            import time
+
+            plt.figure()
+
+            i = 0
             for m_idx, (mode_demo_weights, mode_theta0) in enumerate(
                 demo_weights_theta0s
             ):
-                rewards.append(
-                    proc_one(
-                        xtr,
-                        phi,
-                        max_path_length,
-                        demonstrations,
-                        reward_parameter_bounds,
-                        self.minimize_options,
-                        self.minimize_kwargs,
-                        mode_demo_weights,
-                        mode_theta0,
-                        method=self.method,
-                    )
+                reward = proc_one(
+                    xtr,
+                    phi,
+                    max_path_length,
+                    demonstrations,
+                    reward_parameter_bounds,
+                    self.minimize_options,
+                    self.minimize_kwargs,
+                    mode_demo_weights,
+                    mode_theta0,
+                    method=self.method,
+                    min_path_length=self.min_path_length,
                 )
+                rewards.append(reward)
+                i += 1
         else:
             tasks = {
                 self.parallel_executor.submit(
@@ -503,6 +565,7 @@ class MaxEntEMSolver(EMSolver):
                     mode_demo_weights,
                     mode_theta0,
                     self.method,
+                    self.min_path_length,
                 )
                 for mode_demo_weights, mode_theta0 in demo_weights_theta0s
             }
@@ -1166,24 +1229,20 @@ def bv_em(
     assert len(rewards) == num_modes
 
     resp_history = []
+    resp_delta_history = []
     mode_weights_history = [mode_weights]
     rewards_history = [rewards]
     nll_history = []
     reason = ""
+
     for iteration in it.count():
 
         # Call user pre-iteration callback
         solver.pre_it(iteration)
 
-        # Compute LL
-        if nll_tolerance != 0.0:
-            print("Compute NLL")
-            nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
-            nll_history.append(nll)
-            print(nll)
-        else:
-            nll = None
-            nll_history.append(nll)
+        # Compute NLL
+        nll = solver.mixture_nll(xtr, phi, mode_weights, rewards, rollouts)
+        nll_history.append(nll)
 
         nll_delta = np.nan
         if len(nll_history) >= 2 and nll_tolerance != 0.0:
@@ -1191,26 +1250,28 @@ def bv_em(
             nll_delta = np.diff(nll_history)[-1]
 
         # E-step - update responsibility matrix, mixture component weights
-        print("E-Step")
+        # print("E-Step")
         resp = solver.estep(xtr, phi, mode_weights, rewards, rollouts)
         resp_history.append(resp)
-        print(resp)
+        # print(resp)
 
         resp_delta = np.nan
         if len(resp_history) >= 2:
             # Check Responsibility matrix delta
             resp_delta = np.sum(np.abs(resp_history[-1] - resp_history[-2]))
+        resp_delta_history.append(resp_delta)
 
         mode_weights = np.sum(resp, axis=0) / len(rollouts)
+        # print("mode_weights", mode_weights)
         mode_weights_history.append(mode_weights)
 
         # M-step - solve for new reward parameters
-        print("M-Step")
+        # print("M-Step")
         rewards = solver.mstep(xtr, phi, resp, rollouts, reward_range=reward_range)
         rewards_history.append(rewards)
-        print([r.theta for r in rewards])
 
         # Call user post-iteration callback
+        # print(f"End of iteration {len(rewards_history)}")
         solver.post_it(
             solver, iteration, resp, mode_weights, rewards, nll, nll_delta, resp_delta
         )
@@ -1223,6 +1284,7 @@ def bv_em(
         if len(resp_history) >= 2:
             # Check Responsibility matrix delta
             resp_delta = np.sum(np.abs(resp_history[-1] - resp_history[-2]))
+            # print("resp_tolerance, resp_delta, nll", (resp_tolerance, resp_delta, nll))
 
             if resp_tolerance is not None and resp_delta <= resp_tolerance:
                 # Responsibility matrix has converged (solution is epsilon optimal)
