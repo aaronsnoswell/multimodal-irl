@@ -129,21 +129,43 @@ class SyntheticWorldEnv(gym.Env):
             self._thetas[i][random_indices[i]] = 1.0
 
     def _construct_state_feature_vectors(self):
+        # Code here is for true multivariate gaussian initialisation of the state feature vectors
+        # This has an issue in environments where the number of modes is on par with or larger than the number of states -
+        # a mode can not be allocated any states, which means the MDP looses the ability to express a preference for that
+        # mode
+        # idx_choice = [k for k in range(self._num_behaviour_modes)]
+        # stateToBehaviourIdx = [
+        #     (k, np.random.choice(idx_choice)) for k in range(len(self._states))
+        # ]
+        # # Dictionary that maps a mode to a list of states
+        # indicesByModes = {}
+        # for mode in range(self._num_behaviour_modes):
+        #     indicesByModes[mode] = [
+        #         stateToBehaviourIdx[k][0]
+        #         for k in range(len(stateToBehaviourIdx))
+        #         if stateToBehaviourIdx[k][1] == mode
+        #     ]
+
+        # Code here allocates roughly the same number of states to each behaviour mode, ensuring
+        # that each mode can be expressed in behaviours in the MDP
+        num_modes = self._num_behaviour_modes
+        num_states = len(self._states)
+        states_per_mode = [np.round(num_modes / num_states).astype(int)] * num_modes
+        while np.sum(states_per_mode) < num_states:
+            states_per_mode[np.random.randint(0, num_modes)] += 1
+
+        indicesByModes = {}
+        _cur_state_idx = 0
+        for mode in range(self._num_behaviour_modes):
+            indicesByModes[mode] = []
+            while True:
+                indicesByModes[mode].append(_cur_state_idx)
+                _cur_state_idx += 1
+                if len(indicesByModes[mode]) == states_per_mode[mode]:
+                    break
+
         sigma = 0.025
         cov = sigma * sigma * np.identity(self._num_feature_dimensions)
-        idx_choice = [k for k in range(self._num_behaviour_modes)]
-
-        stateToBehaviourIdx = [
-            (k, np.random.choice(idx_choice)) for k in range(len(self._states))
-        ]
-        # Dicitionary that maps a mode to a list of states
-        indicesByModes = {}
-        for mode in range(self._num_behaviour_modes):
-            indicesByModes[mode] = [
-                stateToBehaviourIdx[k][0]
-                for k in range(len(stateToBehaviourIdx))
-                if stateToBehaviourIdx[k][1] == mode
-            ]
 
         self._psis = np.zeros((len(self._states), self._num_feature_dimensions))
         for mode in indicesByModes:
