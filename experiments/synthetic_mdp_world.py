@@ -438,23 +438,24 @@ def synthetic_mdp_world_v1(
         )
         _log.info(f"{seed}: BV-EM Loop terminated, reason = {train_reason}")
 
-    import time
-    import matplotlib.pyplot as plt
-
-    fname = f"mixture_tracking-{str(time.time())}-{seed}.png"
-
-    foo = np.array([[r[0].theta, r[1].theta] for r in rewards_history])
-
-    plt.figure()
-    plt.plot(foo[:, 0, 0], "r.-", label=f"r0[0]", alpha=0.3)
-    plt.plot(foo[:, 0, 1], "r.--", label=f"r0[1]", alpha=0.3)
-    plt.plot(foo[:, 1, 0], "b.-", label=f"r1[0]", alpha=0.3)
-    plt.plot(foo[:, 1, 1], "b.--", label=f"r1[1]", alpha=0.3)
-    plt.legend()
-    plt.xlabel("EM Iteration")
-    plt.ylabel("Reward parameter value")
-    plt.savefig(fname)
-    plt.close()
+    # Code to plot reward ensemble evolution
+    # import time
+    # import matplotlib.pyplot as plt
+    #
+    # fname = f"mixture_tracking-{str(time.time())}-{seed}.png"
+    #
+    # foo = np.array([[r[0].theta, r[1].theta] for r in rewards_history])
+    #
+    # plt.figure()
+    # plt.plot(foo[:, 0, 0], "r.-", label=f"r0[0]", alpha=0.3)
+    # plt.plot(foo[:, 0, 1], "r.--", label=f"r0[1]", alpha=0.3)
+    # plt.plot(foo[:, 1, 0], "b.-", label=f"r1[0]", alpha=0.3)
+    # plt.plot(foo[:, 1, 1], "b.--", label=f"r1[1]", alpha=0.3)
+    # plt.legend()
+    # plt.xlabel("EM Iteration")
+    # plt.ylabel("Reward parameter value")
+    # plt.savefig(fname)
+    # plt.close()
 
     t1 = datetime.now()
     learn_resp = resp_history[-1]
