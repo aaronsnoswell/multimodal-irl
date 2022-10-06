@@ -229,9 +229,33 @@ def synthetic_mdp_world_v1(
     if initialisation == "Random":
         # Initialize uniformly at random
         # print("Init random")
-        init_mode_weights, init_rewards = solver.init_random(
-            xtr_p, phi, train_demos_p, num_clusters, reward_parameter_range
-        )
+        while True:
+
+            init_mode_weights, init_rewards = solver.init_random(
+                xtr_p, phi, train_demos_p, num_clusters, reward_parameter_range
+            )
+
+            # Sometimes, due to a bad random initialization, the initial learned rewards
+            # will be identical. This causes degeneracy in the EM algorithm (the modes have collapsed)
+            # To fix this, we check if this has occurred, and re-sample a new initial reward ensemble
+
+            # Check learned rewards are distinct
+            all_rewards_are_same = True
+            reward_vecs = [r.theta for r in init_rewards]
+            for r1_idx in range(len(reward_vecs)):
+                for r2_idx in range(r1_idx + 1, len(reward_vecs)):
+                    if np.array_equal(reward_vecs[r1_idx], reward_vecs[r2_idx]):
+                        # This reward pair were identical!
+                        pass
+                    else:
+                        # This reward pair were not the same
+                        all_rewards_are_same = False
+
+            if not all_rewards_are_same:
+                break
+
+            warnings.warn(f"Random initialization lead to degeneracy (all mode rewards are == {reward_vecs[0]}) - re-trying random init")
+
         # print("Init random done")
     elif initialisation == "KMeans":
         # Initialize with K-Means (hard) clustering
