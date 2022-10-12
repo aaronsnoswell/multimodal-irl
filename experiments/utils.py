@@ -4,11 +4,11 @@ import numpy as np
 
 def get_num_workers(num_jobs, requested_workers=None):
     """Figure out how many workers to use
-    
+
     Args:
         num_jobs (int): Number of jobs we have to complete
         requested_workers (int): Number of workers we would like to spin up
-    
+
     Returns:
         (int): Number of workers it is feasible to spin up based on OS scheduling,
             and/or the size of our workload
@@ -35,11 +35,11 @@ def get_num_workers(num_jobs, requested_workers=None):
 
 def replicate_config(cfg, num_times=1):
     """Replicate a config dictionary some number of times
-    
+
     Args:
         cfg (dict): Base config dictionary
         num_times (int): Number of repeats
-    
+
     Returns:
         (list): List of duplicated config dictionaries, with an added 'replicate' field.
     """
@@ -54,10 +54,10 @@ def replicate_config(cfg, num_times=1):
 
 def mongo_config(mongodb_config_file="mongodb-config.txt"):
     """Attempt to load the MongoDB URL from a text file
-    
+
     Args:
         mongodb_config_file (str): Path to a text file containing the MongoDB URL
-    
+
     Returns:
         (str): MongoDB URL, or 'None' if the path wasn't found
     """
@@ -70,26 +70,29 @@ def mongo_config(mongodb_config_file="mongodb-config.txt"):
 
 def gt_responsibility_matrix(k, rpm):
     """Helper to get a ground truth responsibility matrix
-    
+
     Args:
         k (int): Number of clusters
         rpm (int): Number of rollouts per cluster
-    
+
     Returns:
         (numpy array): Block-diagonal ground truth responsibility matrix
     """
-    return np.concatenate([np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)], 0,)
+    return np.concatenate(
+        [np.repeat([np.eye(k)[r, :]], rpm, 0) for r in range(k)],
+        0,
+    )
 
 
 def geometric_distribution(p, num_points):
     """Compute a normalized geometric distribution
-    
+
     Args:
         p (float): Geometric distribution parameter on range [0, 1]. 0 asymptotically
             approaches a uniform distribution, 1.0 approaches a point-mass distribution
             at the first point.
         num_points (int): Size of the support for this distribution
-    
+
     Returns:
         (numpy array): Normalized probability of each of the num_points.
     """
