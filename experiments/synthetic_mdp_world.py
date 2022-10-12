@@ -946,12 +946,12 @@ def main():
     print(f"META: MongoDB Name: ", mongodb_name)
 
     # Parallel loop
-    # with tqdm.tqdm(total=len(configs)) as pbar:
-    #     with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-    #         tasks = {executor.submit(run, config, mongodb_url) for config in configs}
-    #         for future in futures.as_completed(tasks):
-    #             # arg = tasks[future]; result = future.result()
-    #             pbar.update(1)
+    with tqdm.tqdm(total=len(configs)) as pbar:
+        with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+            tasks = {executor.submit(run, config, mongodb_url) for config in configs}
+            for future in futures.as_completed(tasks):
+                # arg = tasks[future]; result = future.result()
+                pbar.update(1)
 
     # Debugging loop
     for config in tqdm.tqdm(configs):
