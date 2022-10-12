@@ -431,6 +431,7 @@ def synthetic_mdp_world_v1(
             nll_tolerance=em_nll_tolerance,
             resp_tolerance=em_resp_tolerance,
             max_iterations=max_iterations,
+            break_on_nll_increase=False,
         )
         _log.info(f"{seed}: BV-EM Loop terminated, reason = {train_reason}")
 
