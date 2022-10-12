@@ -501,7 +501,7 @@ def synthetic_mdp_world_v1(
     )
 
     out_str = (
-        "{}: Finished after {} iterations ({}) =============================\n"
+        "{}: Finished after {} iterations ({}) - {:.3f}sec/it =============================\n"
         "NLL: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
         "ANID: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
         "EVD: {:.2f} -> {:.2f} (train), {:.2f} -> {:.2f} (test)\n"
@@ -510,6 +510,7 @@ def synthetic_mdp_world_v1(
             seed,
             train_iterations,
             train_reason,
+            train_duration * 1.0 / train_iterations,
             np.nan if init_eval_train is None else init_eval_train["nll"],
             learn_eval_train["nll"],
             np.nan if init_eval is None else init_eval["nll"],
