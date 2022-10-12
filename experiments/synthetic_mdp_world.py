@@ -922,6 +922,12 @@ def main():
         help="The maximum length of the demonstration trajectories",
     )
 
+    parser.add_argument(
+        "--cpu_query",
+        action="store_true",
+        help="If provided, query the number of available CPUs and then exit",
+    )
+
     args = parser.parse_args()
     # print("META: Arguments:", args, flush=True)
 
@@ -946,6 +952,11 @@ def main():
 
     if args.seed != None:
         config_updates["seed"] = args.seed
+
+    if args.cpu_query:
+        num_cpus = get_num_workers(np.inf, None)
+        print(f"Available CPUs: {num_cpus}")
+        return
 
     print("META: Configuration: ")
     pprint(config_updates)
