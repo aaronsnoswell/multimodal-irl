@@ -63,10 +63,8 @@ def base_config():
     num_demos = 100
     demo_skew = 0.0
     num_clusters = 3
-    wind = 0.1
     algorithm = "MaxEnt"
     initialisation = "Random"
-    width = 6
     gamma = 0.99
     max_demonstration_length = 20
     num_init_restarts = 5000
@@ -94,10 +92,8 @@ def synthetic_mdp_world_v1(
     num_demos,
     demo_skew,
     num_clusters,
-    wind,
     algorithm,
     initialisation,
-    width,
     gamma,
     max_demonstration_length,
     num_init_restarts,
@@ -809,14 +805,6 @@ def main():
     )
 
     parser.add_argument(
-        "--wind",
-        required=False,
-        default=0.1,
-        type=float,
-        help="Random action probability",
-    )
-
-    parser.add_argument(
         "--algorithm",
         required=False,
         default="MaxEnt",
@@ -927,7 +915,6 @@ def main():
         "num_demos": args.num_demos,
         "demo_skew": args.demo_skew,
         "num_clusters": args.num_clusters,
-        "wind": args.wind,
         "algorithm": args.algorithm,
         "initialisation": args.initialisation,
         "reward_initialisation": args.reward_initialisation,
