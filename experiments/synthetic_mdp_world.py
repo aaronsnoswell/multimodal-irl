@@ -954,8 +954,8 @@ def main():
                 pbar.update(1)
 
     # Debugging loop
-    for config in tqdm.tqdm(configs):
-        run(config, mongodb_url, mongodb_name)
+    # for config in tqdm.tqdm(configs):
+    #     run(config, mongodb_url, mongodb_name)
 
 
 if __name__ == "__main__":
