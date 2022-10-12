@@ -870,7 +870,7 @@ def main():
     parser.add_argument(
         "--em_resp_tolerance",
         required=False,
-        default=1e-4,
+        default=None,
         type=float,
         help="EM convergence tolerance for the responsibility matrix entries. N.b. this should be scaled with (number of paths) x (number of learned modes). In our experiments we used (1.25e-6)x(num paths)x(num learned modes)",
     )
@@ -932,6 +932,12 @@ def main():
 
     args = parser.parse_args()
     # print("META: Arguments:", args, flush=True)
+
+    if args.em_resp_tolerance is None:
+        args.em_resp_tolerance = (1.5e-6) * (args.num_demos) * (args.num_clusters)
+        print(
+            f"META: Automatically set responsibility matrix tolerance to {args.em_resp_tolerance}"
+        )
 
     config_updates = {
         "num_states": args.num_states,
