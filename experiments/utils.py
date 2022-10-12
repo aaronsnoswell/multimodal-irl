@@ -59,9 +59,9 @@ def mongo_config(mongodb_config_file="mongodb-config.txt"):
         mongodb_config_file (str): Path to a text file containing the MongoDB URL
     
     Returns:
-        (str): MongoDB URL, or default URL if path wasn't found
+        (str): MongoDB URL, or 'None' if the path wasn't found
     """
-    mongodb_url = "localhost:27017"
+    mongodb_url = None
     if os.path.exists(mongodb_config_file):
         with open(mongodb_config_file, "r") as file:
             mongodb_url = file.readline()
