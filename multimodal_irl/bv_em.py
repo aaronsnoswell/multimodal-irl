@@ -1280,7 +1280,7 @@ def bv_em(
         if len(resp_history) >= 2:
             # Check Responsibility matrix delta
             resp_delta = np.sum(np.abs(resp_history[-1] - resp_history[-2]))
-            # print("resp_tolerance, resp_delta, nll", (resp_tolerance, resp_delta, nll))
+            # print("resp_tolerance, resp_delta", (resp_tolerance, resp_delta))
 
             if resp_tolerance is not None and resp_delta <= resp_tolerance:
                 # Responsibility matrix has converged (solution is epsilon optimal)
@@ -1290,6 +1290,8 @@ def bv_em(
         if len(nll_history) >= 2 and nll_tolerance != 0.0:
             # Check NLL delta
             nll_delta = np.diff(nll_history)[-1]
+            # print("nll, nll_tolerance, nll_delta", (nll, nll_tolerance, nll_delta))
+
             if nll_tolerance is not None and np.abs(nll_delta) <= nll_tolerance:
                 # NLL has converged
                 reason = "NLL converged: |NLL delta| <= tol"
