@@ -776,7 +776,7 @@ def main():
         required=False,
         default=5,
         type=int,
-        help="Number of elements (ground truth clusters) to use",
+        help="Number of environment modes to create",
     )
 
     parser.add_argument(
@@ -859,7 +859,7 @@ def main():
         required=False,
         default=1e-4,
         type=float,
-        help="EM convergence tolerance for the responsibility matrix entries",
+        help="EM convergence tolerance for the responsibility matrix entries. N.b. this should be scaled with (number of paths) x (number of learned modes). In our experiments we used (1.25e-6)x(num paths)x(num learned modes)",
     )
 
     parser.add_argument(
