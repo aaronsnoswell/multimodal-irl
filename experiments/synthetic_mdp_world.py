@@ -729,8 +729,8 @@ def run(config_updates, mongodb_url="localhost:27017", mongodb_name="MY_DB"):
     ex.main(synthetic_mdp_world_v1)
 
     # Attach MongoDB observer if necessary
-    if mongodb_url is not None and not ex.observers:
-        ex.observers.append(MongoObserver(url=mongodb_url, db_name=mongodb_name))
+    # if mongodb_url is not None and not ex.observers:
+    #     ex.observers.append(MongoObserver(url=mongodb_url, db_name=mongodb_name))
 
     # Suppress warnings about padded MPDs
     with warnings.catch_warnings():
