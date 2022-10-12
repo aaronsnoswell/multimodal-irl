@@ -65,7 +65,7 @@ def base_config():
     num_clusters = 3
     algorithm = "MaxEnt"
     initialisation = "Random"
-    gamma = 0.99
+    gamma = 0.98
     max_demonstration_length = 20
     num_init_restarts = 5000
     em_nll_tolerance = 0.0
@@ -109,7 +109,6 @@ def synthetic_mdp_world_v1(
     _run,
 ):
     """ElementWorld Sacred Experiment"""
-    discount_factor = 0.98
 
     # Construct EW
     _log.info(f"{seed}: Preparing environment...")
@@ -118,7 +117,7 @@ def synthetic_mdp_world_v1(
         num_actions=num_actions,
         num_behaviour_modes=num_behaviour_modes,
         num_feature_dimensions=num_feature_dimensions,
-        discount_factor=discount_factor,
+        discount_factor=gamma,
         seed=seed,
     )
 
