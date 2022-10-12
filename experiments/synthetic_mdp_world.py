@@ -11,6 +11,7 @@ import warnings
 import numpy as np
 
 from sacred import Experiment
+from sacred.observers import FileStorageObserver
 from sacred.observers import MongoObserver
 
 from pprint import pprint
@@ -714,13 +715,20 @@ def element_world_eval(
     )
 
 
-def run(config_updates, mongodb_url="localhost:27017", mongodb_name="MY_DB"):
+def run(
+    config_updates,
+    mongodb_url=None,
+    mongodb_name="MY_DB",
+    fileobserver_dir=None,
+):
     """Run a single experiment with the given configuration
 
     Args:
         config_updates (dict): Configuration updates
         mongodb_url (str): MongoDB URL, or None if no Mongo observer should be used for
             this run
+        mongodb_name (str): Name of the MongoDB database, (only used if mongodb_url is provided)
+        fileobserver_dir (str): Directory to use for FileObserver base path, or None to disable
     """
 
     # Dynamically bind experiment config and main function
@@ -729,8 +737,11 @@ def run(config_updates, mongodb_url="localhost:27017", mongodb_name="MY_DB"):
     ex.main(synthetic_mdp_world_v1)
 
     # Attach MongoDB observer if necessary
-    # if mongodb_url is not None and not ex.observers:
-    #     ex.observers.append(MongoObserver(url=mongodb_url, db_name=mongodb_name))
+    if mongodb_url is not None:
+        ex.observers.append(MongoObserver(url=mongodb_url, db_name=mongodb_name))
+
+    if fileobserver_dir is not None:
+        ex.observers.append(FileStorageObserver("."))
 
     # Suppress warnings about padded MPDs
     with warnings.catch_warnings():
@@ -885,6 +896,14 @@ def main():
     )
 
     parser.add_argument(
+        "--fileobserver_dir",
+        required=False,
+        default=None,
+        type=str,
+        help="If provided, a FileStorageObserver will be enabled at this base directory",
+    )
+
+    parser.add_argument(
         "--seed", required=False, default=None, type=int, help="The seed"
     )
 
@@ -904,7 +923,7 @@ def main():
     )
 
     args = parser.parse_args()
-    print("META: Arguments:", args, flush=True)
+    # print("META: Arguments:", args, flush=True)
 
     config_updates = {
         "num_states": args.num_states,
@@ -945,17 +964,24 @@ def main():
     print(f"META: MongoDB Server URL: {mongodb_url}")
     print(f"META: MongoDB Name: ", mongodb_name)
 
+    print(f"META: FileStorageObserver base path: {args.fileobserver_dir}")
+
     # Parallel loop
     with tqdm.tqdm(total=len(configs)) as pbar:
         with futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-            tasks = {executor.submit(run, config, mongodb_url) for config in configs}
+            tasks = {
+                executor.submit(
+                    run, config, mongodb_url, mongodb_name, args.fileobserver_dir
+                )
+                for config in configs
+            }
             for future in futures.as_completed(tasks):
                 # arg = tasks[future]; result = future.result()
                 pbar.update(1)
 
     # Debugging loop
     # for config in tqdm.tqdm(configs):
-    #     run(config, mongodb_url, mongodb_name)
+    #     run(config, mongodb_url, mongodb_name, args.fileobserver_dir)
 
 
 if __name__ == "__main__":
