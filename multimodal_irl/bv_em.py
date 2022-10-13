@@ -338,7 +338,7 @@ class MaxEntEMSolver(EMSolver):
                     xtr, phi, mode_weight, mode_reward, demonstrations
                 )
         else:
-            # Parallelelize execution over modes
+            # Parallelize execution over modes
             tasks = {
                 self.parallel_executor.submit(
                     proc_one, xtr, phi, mode_weight, mode_reward, demonstrations
