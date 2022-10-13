@@ -17,7 +17,7 @@ def get_num_workers(num_jobs, requested_workers=None):
     # Try and determine how many CPUs we are allowed to use
     num_cpus = (
         len(os.sched_getaffinity(0))
-        # Ask the (linux) OS how many CPUs wer are scheduled to use
+        # Ask the (linux) OS how many CPUs are scheduled to use
         if "sched_getaffinity" in dir(os)
         # If we can't find our scheduled number of CPUs, just use one less than the
         # system's physical socket count - leave one for GUI, bookkeeping etc.
