@@ -743,7 +743,7 @@ def run(
         ex.observers.append(MongoObserver(url=mongodb_url, db_name=mongodb_name))
 
     if fileobserver_dir is not None:
-        ex.observers.append(FileStorageObserver("."))
+        ex.observers.append(FileStorageObserver(fileobserver_dir))
 
     # Suppress warnings about padded MPDs
     with warnings.catch_warnings():
