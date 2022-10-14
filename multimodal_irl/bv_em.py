@@ -352,13 +352,8 @@ class MaxEntEMSolver(EMSolver):
                 resp.append(future.result())
             resp = np.array(resp).T
 
-        resp_row_sums = np.sum(resp, axis=1)
-        for ridx, (row, row_sum) in enumerate(zip(resp, resp_row_sums)):
-            # In the case of all extremely low responsibility allocations, revert to the uniform distribution
-            if row_sum == 0.0:
-                resp[ridx] = 1.0 / len(row)
-            else:
-                resp[ridx] /= row_sum
+        # Each demonstration gets a mass of 1 to allocate between modes
+        resp /= np.sum(resp, axis=1, keepdims=True)
 
         return resp
 
