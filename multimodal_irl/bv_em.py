@@ -328,8 +328,9 @@ class MaxEntEMSolver(EMSolver):
             return np.array([np.ones(len(demonstrations))]).T
 
         weights_rewards = zip(mode_weights, rewards)
-        proc_one = lambda xtr, phi, mode_weight, mode_reward, demonstrations: np.exp(
-            maxent_path_logprobs(xtr, phi, mode_reward, demonstrations)
+        proc_one = (
+            lambda xtr, phi, mode_weight, mode_reward, demonstrations: mode_weight
+            * np.exp(maxent_path_logprobs(xtr, phi, mode_reward, demonstrations))
         )
         if self.parallel_executor is None:
             resp = np.ones((len(demonstrations), num_modes))
