@@ -588,27 +588,24 @@ class MaxEntEMSolver(EMSolver):
         """
 
         # Pre-compute path probabilities under each mode (faster this way)
-        path_probs = np.array(
+        # We work in log-space and apply the Log-Sum-Exp trick to avoid overflow
+        # Shape is (modes) x (paths)
+        path_log_probs = np.array(
             [
-                np.exp(maxent_path_logprobs(xtr, phi, reward, demonstrations))
-                for reward in rewards
+                np.log(mode_weight)
+                + maxent_path_logprobs(xtr, phi, reward, demonstrations)
+                for mode_weight, reward in zip(mode_weights, rewards)
             ]
         )
 
-        trajectory_mixture_lls = []
-        for demo_idx in range(len(demonstrations)):
-            # Sum at this level, then take log at this level
-            trajectory_mixture_lls.append(
-                np.log(
-                    np.sum(
-                        [
-                            mode_weight * path_probs[mode_idx, demo_idx]
-                            for mode_idx, mode_weight in enumerate(mode_weights)
-                        ]
-                    )
-                )
-            )
+        # Apply LSE trick individually for each path here
+        max_logprob_per_path = np.max(path_log_probs, axis=0, keepdims=True)
+        max_logprob_per_path_flat = np.max(path_log_probs, axis=0)
+        path_mode_probs = np.exp(path_log_probs - max_logprob_per_path)
+        mode_probs = np.sum(path_mode_probs, axis=0)
+        trajectory_mixture_lls = np.log(mode_probs) + max_logprob_per_path_flat
 
+        # Take the average LL across all trajectories
         mixture_ll = np.mean(trajectory_mixture_lls)
 
         return -1.0 * mixture_ll

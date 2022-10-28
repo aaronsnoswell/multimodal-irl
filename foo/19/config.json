@@ -1,0 +1,23 @@
+{
+  "algorithm": "MaxEnt",
+  "boltzmann_scale": 5.0,
+  "demo_skew": 0.0,
+  "em_nll_tolerance": 1e-05,
+  "em_resp_tolerance": 0.00048,
+  "gamma": 0.98,
+  "initialisation": "KMeans",
+  "max_demonstration_length": 10,
+  "max_iterations": 10,
+  "num_actions": 4,
+  "num_behaviour_modes": 4,
+  "num_clusters": 4,
+  "num_demos": 80,
+  "num_feature_dimensions": 200,
+  "num_init_restarts": 5000,
+  "num_states": 200,
+  "optimization_method": "L-BFGS-B",
+  "replicate": 0,
+  "reward_initialisation": "MeanOnly",
+  "seed": 296010572,
+  "skip_ml_paths": true
+}
