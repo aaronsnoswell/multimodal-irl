@@ -353,6 +353,15 @@ class MaxEntEMSolver(EMSolver):
                 resp.append(future.result())
             resp = np.array(resp).T
 
+        resp_max = np.max(resp, axis=1)
+        resp_min = np.min(resp, axis=1)
+        resp_range = np.max(resp_max - resp_min)
+        dtype_exp_precision = np.abs(np.log(np.finfo(resp.dtype).eps))
+        if resp_range > dtype_exp_precision:
+            warnings.warn(
+                f"Responsibility matrix rows vary in log-magnitude by up to {resp_range}, which is larger than the responsibility matrix's dtype ({resp.dtype}) can consistently represent after exponentiating ({dtype_exp_precision}) - algorithm may be numerically unstable. Consider using shorter path lengths or better reward initializations to get larger path likelihoods"
+            )
+
         # Exponentiate the log weights
         resp = np.exp(resp - np.max(resp, axis=1, keepdims=True))
 
