@@ -141,3 +141,5 @@ experiments/old-experiments/
 experiments/*.ipynb
 experiments/*.pdf
 experiments/*.xls*
+
+cluster-experiment*
